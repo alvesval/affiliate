@@ -6,14 +6,14 @@ from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampa
 from app.models.oauth import MercadoLivreOAuth, OAuthAttempt
 from app.routers import mercadolivre
 from app.routers import products, dashboard, catalog, content, affiliates, social
-app=FastAPI(title="Affiliate Intelligence API",version="1.7.0")
+app=FastAPI(title="Affiliate Intelligence API",version="1.8.0")
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000", "https://affiliate.alvaldeir.workers.dev",],allow_credentials=True,allow_methods=["*"],allow_headers=["*"] )
 from app.core.migrations import upgrade, upgrade_social
 upgrade(engine)
 upgrade_social(engine)
 Base.metadata.create_all(bind=engine)
 @app.get("/health")
-def health(): return {"status":"ok","version":"1.7.0"}
+def health(): return {"status":"ok","version":"1.8.0"}
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(mercadolivre.router)

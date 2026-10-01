@@ -51,6 +51,10 @@ class ContentVariant(Base):
     media_filename: Mapped[str]=mapped_column(String(500), default='')
     media_content_type: Mapped[str]=mapped_column(String(100), default='')
     media_size: Mapped[int]=mapped_column(Integer, default=0)
+    media_duration_seconds: Mapped[int]=mapped_column(Integer, default=0)
+    affiliate_url: Mapped[str]=mapped_column(String(1000), default='')
+    affiliate_label: Mapped[str]=mapped_column(String(120), default='')
+    link_placement: Mapped[str]=mapped_column(String(40), default='bio')
     status: Mapped[str]=mapped_column(String(30), default='draft')
 
 class Publication(Base):
@@ -71,4 +75,11 @@ class Publication(Base):
     disable_duet: Mapped[bool]=mapped_column(Boolean, default=False)
     disable_stitch: Mapped[bool]=mapped_column(Boolean, default=False)
     user_consent: Mapped[bool]=mapped_column(Boolean, default=False)
+    brand_content_toggle: Mapped[bool]=mapped_column(Boolean, default=False)
+    brand_organic_toggle: Mapped[bool]=mapped_column(Boolean, default=False)
+    is_aigc: Mapped[bool]=mapped_column(Boolean, default=False)
+    tiktok_status: Mapped[str]=mapped_column(String(80), default='')
+    tiktok_fail_reason: Mapped[str]=mapped_column(Text, default='')
+    uploaded_bytes: Mapped[int]=mapped_column(Integer, default=0)
+    public_post_ids: Mapped[str]=mapped_column(Text, default='')
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)

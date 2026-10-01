@@ -37,6 +37,10 @@ def upgrade_social(engine):
         "media_filename":"VARCHAR(500) NOT NULL DEFAULT ''",
         "media_content_type":"VARCHAR(100) NOT NULL DEFAULT ''",
         "media_size":"INTEGER NOT NULL DEFAULT 0",
+        "media_duration_seconds":"INTEGER NOT NULL DEFAULT 0",
+        "affiliate_url":"VARCHAR(1000) NOT NULL DEFAULT ''",
+        "affiliate_label":"VARCHAR(120) NOT NULL DEFAULT ''",
+        "link_placement":"VARCHAR(40) NOT NULL DEFAULT 'bio'",
     })
     _add_columns(engine,"publications",{
         "privacy_level":"VARCHAR(50) NOT NULL DEFAULT 'SELF_ONLY'",
@@ -44,4 +48,11 @@ def upgrade_social(engine):
         "disable_duet":"BOOLEAN NOT NULL DEFAULT FALSE",
         "disable_stitch":"BOOLEAN NOT NULL DEFAULT FALSE",
         "user_consent":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "brand_content_toggle":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "brand_organic_toggle":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "is_aigc":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "tiktok_status":"VARCHAR(80) NOT NULL DEFAULT ''",
+        "tiktok_fail_reason":"TEXT NOT NULL DEFAULT ''",
+        "uploaded_bytes":"INTEGER NOT NULL DEFAULT 0",
+        "public_post_ids":"TEXT NOT NULL DEFAULT ''",
     })

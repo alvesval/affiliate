@@ -67,6 +67,9 @@ async def publish_tiktok(conn:SocialConnection, variant:ContentVariant, publicat
         'disable_duet':bool(publication.disable_duet or creator.get('duet_disabled')),
         'disable_comment':bool(publication.disable_comment or creator.get('comment_disabled')),
         'disable_stitch':bool(publication.disable_stitch or creator.get('stitch_disabled')),
+        'brand_content_toggle':bool(publication.brand_content_toggle),
+        'brand_organic_toggle':bool(publication.brand_organic_toggle),
+        'is_aigc':bool(publication.is_aigc),
       },
       'source_info':{'source':'FILE_UPLOAD','video_size':size,'chunk_size':chunk_size,'total_chunk_count':total_chunks}
     }
