@@ -55,6 +55,7 @@ class ContentVariant(Base):
     affiliate_url: Mapped[str]=mapped_column(String(1000), default='')
     affiliate_label: Mapped[str]=mapped_column(String(120), default='')
     link_placement: Mapped[str]=mapped_column(String(40), default='bio')
+    affiliate_configured_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True)
     status: Mapped[str]=mapped_column(String(30), default='draft')
 
 class Publication(Base):

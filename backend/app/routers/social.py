@@ -58,7 +58,7 @@ def _variant(p:Product, platform:str, duration:int, tone:str, audience:str):
 
 def _variant_json(v:ContentVariant):
     return {'id':v.id,'platform':v.platform,'title':v.title,'hook':v.hook,'caption':v.caption,'script':v.script,'hashtags':v.hashtags,'cta':v.cta,
-      'media_url':v.media_url,'media_filename':v.media_filename,'media_content_type':v.media_content_type,'media_size':v.media_size,'media_duration_seconds':v.media_duration_seconds,'has_uploaded_media':bool(v.media_storage_key),'affiliate_url':v.affiliate_url,'affiliate_label':v.affiliate_label,'link_placement':v.link_placement,'status':v.status}
+      'media_url':v.media_url,'media_filename':v.media_filename,'media_content_type':v.media_content_type,'media_size':v.media_size,'media_duration_seconds':v.media_duration_seconds,'has_uploaded_media':bool(v.media_storage_key),'affiliate_url':v.affiliate_url,'affiliate_label':v.affiliate_label,'link_placement':v.link_placement,'affiliate_configured':bool(v.affiliate_configured_at),'affiliate_configured_at':v.affiliate_configured_at.isoformat() if v.affiliate_configured_at else None,'status':v.status}
 
 def _publication_json(x:Publication):
     return {'id':x.id,'variant_id':x.variant_id,'platform':x.platform,'status':x.status,'scheduled_at':x.scheduled_at.isoformat() if x.scheduled_at else None,
@@ -147,8 +147,8 @@ def update_affiliate_link(variant_id:int,data:AffiliateLinkRequest,db:Session=De
         raise HTTPException(422,'Etiqueta do Mercado Livre: use até 30 caracteres, somente letras minúsculas e números, sem espaços.')
     if url and not url.lower().startswith('https://'):raise HTTPException(422,'Use um link HTTPS oficial de afiliado.')
     placement=data.link_placement if data.link_placement in ('bio','caption','description','manual') else 'manual'
-    v.affiliate_url=url;v.affiliate_label=label;v.link_placement=placement
-    db.commit();return _variant_json(v)
+    v.affiliate_url=url;v.affiliate_label=label;v.link_placement=placement;v.affiliate_configured_at=datetime.utcnow()
+    db.commit();db.refresh(v);return _variant_json(v)
 
 @router.get('/tiktok/creator-info',dependencies=[Depends(require_admin)])
 async def creator_info(db:Session=Depends(get_db)):
@@ -163,6 +163,8 @@ async def schedule(campaign_id:int,data:ScheduleRequest,db:Session=Depends(get_d
     if not c:raise HTTPException(404,'Campanha não encontrada')
     if c.status!='approved':raise HTTPException(409,'Aprove a campanha antes de agendar/publicar')
     vs=db.scalars(select(ContentVariant).where(ContentVariant.campaign_id==c.id)).all()
+    not_configured=[v.platform for v in vs if not v.affiliate_configured_at]
+    if not_configured: raise HTTPException(409,f"Salve a configuração de link antes de publicar: {', '.join(not_configured)}")
     if any(v.platform=='TikTok' for v in vs):
         if not data.tiktok_user_consent:raise HTTPException(422,'Confirme o consentimento antes de enviar ao TikTok.')
         conn=db.scalar(select(SocialConnection).where(SocialConnection.platform=='TikTok'))

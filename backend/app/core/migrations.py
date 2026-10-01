@@ -41,6 +41,7 @@ def upgrade_social(engine):
         "affiliate_url":"VARCHAR(1000) NOT NULL DEFAULT ''",
         "affiliate_label":"VARCHAR(120) NOT NULL DEFAULT ''",
         "link_placement":"VARCHAR(40) NOT NULL DEFAULT 'bio'",
+        "affiliate_configured_at":"TIMESTAMP NULL",
     })
     _add_columns(engine,"publications",{
         "privacy_level":"VARCHAR(50) NOT NULL DEFAULT 'SELF_ONLY'",
