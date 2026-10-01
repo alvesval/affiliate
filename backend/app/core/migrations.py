@@ -21,3 +21,27 @@ def upgrade(engine):
                 conn.execute(text(f"ALTER TABLE products ADD COLUMN {name} {ddl}"))
         # Existing V1 rows can contain duplicates; avoid imposing a unique constraint
         # on pre-existing data until a deduplication migration has been reviewed.
+
+
+def _add_columns(engine, table, additions):
+    inspector=inspect(engine)
+    if table not in inspector.get_table_names(): return
+    columns={col["name"] for col in inspector.get_columns(table)}
+    with engine.begin() as conn:
+        for name,ddl in additions.items():
+            if name not in columns: conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+def upgrade_social(engine):
+    _add_columns(engine,"content_variants",{
+        "media_storage_key":"VARCHAR(1000) NOT NULL DEFAULT ''",
+        "media_filename":"VARCHAR(500) NOT NULL DEFAULT ''",
+        "media_content_type":"VARCHAR(100) NOT NULL DEFAULT ''",
+        "media_size":"INTEGER NOT NULL DEFAULT 0",
+    })
+    _add_columns(engine,"publications",{
+        "privacy_level":"VARCHAR(50) NOT NULL DEFAULT 'SELF_ONLY'",
+        "disable_comment":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "disable_duet":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "disable_stitch":"BOOLEAN NOT NULL DEFAULT FALSE",
+        "user_consent":"BOOLEAN NOT NULL DEFAULT FALSE",
+    })

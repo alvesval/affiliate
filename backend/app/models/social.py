@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 
@@ -47,6 +47,10 @@ class ContentVariant(Base):
     hashtags: Mapped[str]=mapped_column(Text, default='')
     cta: Mapped[str]=mapped_column(String(500), default='')
     media_url: Mapped[str]=mapped_column(String(2000), default='')
+    media_storage_key: Mapped[str]=mapped_column(String(1000), default='')
+    media_filename: Mapped[str]=mapped_column(String(500), default='')
+    media_content_type: Mapped[str]=mapped_column(String(100), default='')
+    media_size: Mapped[int]=mapped_column(Integer, default=0)
     status: Mapped[str]=mapped_column(String(30), default='draft')
 
 class Publication(Base):
@@ -62,4 +66,9 @@ class Publication(Base):
     external_post_url: Mapped[str]=mapped_column(String(2000), default='')
     error_message: Mapped[str]=mapped_column(Text, default='')
     retry_count: Mapped[int]=mapped_column(Integer, default=0)
+    privacy_level: Mapped[str]=mapped_column(String(50), default='SELF_ONLY')
+    disable_comment: Mapped[bool]=mapped_column(Boolean, default=False)
+    disable_duet: Mapped[bool]=mapped_column(Boolean, default=False)
+    disable_stitch: Mapped[bool]=mapped_column(Boolean, default=False)
+    user_consent: Mapped[bool]=mapped_column(Boolean, default=False)
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)

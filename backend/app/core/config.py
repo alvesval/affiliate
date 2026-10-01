@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     meta_app_id: str = ""
     meta_app_secret: str = ""
     meta_redirect_uri: str = ""
+    r2_endpoint_url: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = ""
+    media_max_upload_mb: int = 500
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
