@@ -7,7 +7,7 @@ from app.models.oauth import MercadoLivreOAuth, OAuthAttempt
 from app.routers import mercadolivre
 from app.routers import products, dashboard, catalog, content, affiliates, social
 app=FastAPI(title="Affiliate Intelligence API",version="1.5.0")
-app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000"],allow_credentials=True,allow_methods=["*"],allow_headers=["*"] )
+app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000", "https://affiliate.alvaldeir.workers.dev",],allow_credentials=True,allow_methods=["*"],allow_headers=["*"] )
 from app.core.migrations import upgrade
 upgrade(engine)
 Base.metadata.create_all(bind=engine)
