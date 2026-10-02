@@ -9,7 +9,8 @@ class User(Base):
     name: Mapped[str]=mapped_column(String(120))
 class Product(Base):
     __tablename__="products"
-    __table_args__ = (UniqueConstraint("marketplace", "external_id", name="uq_product_marketplace_external"),)
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
+    __table_args__ = (UniqueConstraint("company_id", "marketplace", "external_id", name="uq_product_company_marketplace_external"),)
     id: Mapped[int]=mapped_column(primary_key=True)
     image_url: Mapped[str]=mapped_column(String(2000), default="")
     permalink: Mapped[str]=mapped_column(String(2000), default="")
@@ -28,12 +29,14 @@ class Product(Base):
     affiliate_verified_at: Mapped[datetime | None]=mapped_column(DateTime, nullable=True)
 class ProductPrice(Base):
     __tablename__="product_prices"
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     id: Mapped[int]=mapped_column(primary_key=True)
     product_id: Mapped[int]=mapped_column(ForeignKey("products.id"), index=True)
     price: Mapped[float]=mapped_column(Float)
     captured_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 class ProductScore(Base):
     __tablename__="product_scores"
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     id: Mapped[int]=mapped_column(primary_key=True)
     product_id: Mapped[int]=mapped_column(ForeignKey("products.id"), index=True)
     score: Mapped[float]=mapped_column(Float)
@@ -41,6 +44,7 @@ class ProductScore(Base):
     calculated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class ProductContent(Base):
+    company_id: Mapped[int|None] = mapped_column(Integer, nullable=True, index=True)
     __tablename__ = "product_contents"
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)

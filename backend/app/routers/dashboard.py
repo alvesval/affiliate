@@ -4,10 +4,11 @@ from sqlalchemy import select
 from app.core.db import get_db
 from app.models.entities import Product
 from app.services.scoring import calculate_score
+from app.core.auth import current_principal, Principal
 router=APIRouter(prefix="/dashboard",tags=["dashboard"])
 @router.get("/summary")
-def summary(db:Session=Depends(get_db)):
-    products=db.scalars(select(Product)).all()
+def summary(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    products=db.scalars(select(Product).where(Product.company_id==p.company_id)).all()
     ranked=[]
     for p in products:
         if not p.affiliate_url or p.commission_rate<=0: continue

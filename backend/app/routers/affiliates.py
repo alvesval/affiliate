@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models.entities import Product
-from app.routers.mercadolivre import require_admin
+from app.core.auth import current_principal, require_role, Principal
 from app.services.affiliate_provider import analyze_mercadolivre_url
 
 router=APIRouter(prefix="/api/v1/affiliates", tags=["affiliates"])
@@ -41,7 +41,7 @@ class QuickSaveRequest(BaseModel):
     label: str = Field(default="", max_length=120)
 
 @router.post("/mercadolivre/analyze")
-async def analyze(payload: AnalyzeRequest):
+async def analyze(payload: AnalyzeRequest, p:Principal=Depends(current_principal)):
     try:
         return await analyze_mercadolivre_url(payload.url)
     except ValueError as exc:
@@ -49,8 +49,8 @@ async def analyze(payload: AnalyzeRequest):
     except Exception:
         raise HTTPException(502, "Não foi possível analisar o link agora. Tente novamente.")
 
-@router.post("/mercadolivre/quick-save", dependencies=[Depends(require_admin)])
-def quick_save(payload: QuickSaveRequest, db:Session=Depends(get_db)):
+@router.post("/mercadolivre/quick-save")
+def quick_save(payload: QuickSaveRequest, p:Principal=Depends(require_role("EDITOR")), db:Session=Depends(get_db)):
     try:
         analyzed=validate_url(payload.analyzed_url, ALLOWED_ORIGINAL|ALLOWED_AFFILIATE, "Link")
         resolved=validate_url(payload.resolved_url, ALLOWED_ORIGINAL|ALLOWED_AFFILIATE, "URL resolvida") if payload.resolved_url else analyzed
@@ -59,7 +59,7 @@ def quick_save(payload: QuickSaveRequest, db:Session=Depends(get_db)):
         raise HTTPException(422, str(exc))
     external=(payload.external_id or "").strip().upper() or None
     if external and not ID_RE.fullmatch(external): raise HTTPException(422,"ID MLB inválido")
-    stmt=select(Product).where(Product.marketplace=="Mercado Livre")
+    stmt=select(Product).where(Product.company_id==p.company_id,Product.marketplace=="Mercado Livre")
     product=db.scalar(stmt.where(Product.external_id==external)) if external else None
     if product is None:
         product=db.scalar(stmt.where(Product.permalink==resolved))
@@ -68,7 +68,7 @@ def quick_save(payload: QuickSaveRequest, db:Session=Depends(get_db)):
     created=product is None
     if created:
         key=external or "URL-"+hashlib.sha256(resolved.encode()).hexdigest()[:24].upper()
-        product=Product(marketplace="Mercado Livre",external_id=key,title=payload.title.strip(),source="affiliate_assisted")
+        product=Product(company_id=p.company_id,marketplace="Mercado Livre",external_id=key,title=payload.title.strip(),source="affiliate_assisted")
         db.add(product)
     product.title=payload.title.strip(); product.permalink=resolved
     if payload.image_url: product.image_url=payload.image_url
@@ -95,17 +95,17 @@ class AffiliateRow(BaseModel):
 
 class BatchRequest(BaseModel): items:list[AffiliateRow]=Field(min_length=1,max_length=100)
 
-@router.post("/mercadolivre/batch",dependencies=[Depends(require_admin)])
-def import_affiliates(payload:BatchRequest,db:Session=Depends(get_db)):
+@router.post("/mercadolivre/batch")
+def import_affiliates(payload:BatchRequest,p:Principal=Depends(require_role("EDITOR")),db:Session=Depends(get_db)):
     results=[]
     for index,row in enumerate(payload.items,1):
         try:
-            stmt=select(Product).where(Product.marketplace=="Mercado Livre"); product=db.scalar(stmt.where(Product.external_id==row.external_id)) if row.external_id else None
+            stmt=select(Product).where(Product.company_id==p.company_id,Product.marketplace=="Mercado Livre"); product=db.scalar(stmt.where(Product.external_id==row.external_id)) if row.external_id else None
             if product is None: product=db.scalar(stmt.where(Product.permalink==row.original_url))
             if product is None: product=db.scalar(stmt.where(Product.affiliate_url==row.affiliate_url))
             created=product is None
             if created:
-                key=row.external_id or "URL-"+hashlib.sha256(row.original_url.encode()).hexdigest()[:24].upper(); product=Product(marketplace="Mercado Livre",external_id=key,title=row.title,source="affiliate_manual"); db.add(product)
+                key=row.external_id or "URL-"+hashlib.sha256(row.original_url.encode()).hexdigest()[:24].upper(); product=Product(company_id=p.company_id,marketplace="Mercado Livre",external_id=key,title=row.title,source="affiliate_manual"); db.add(product)
             product.title=row.title; product.permalink=row.original_url; product.affiliate_url=row.affiliate_url; product.affiliate_label=row.label; product.affiliate_source="manual_mercadolivre_affiliates"; product.affiliate_verified_at=datetime.now(timezone.utc).replace(tzinfo=None)
             if row.price is not None: product.price=row.price
             if row.commission_rate is not None: product.commission_rate=row.commission_rate

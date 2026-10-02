@@ -57,3 +57,28 @@ def upgrade_social(engine):
         "uploaded_bytes":"INTEGER NOT NULL DEFAULT 0",
         "public_post_ids":"TEXT NOT NULL DEFAULT ''",
     })
+
+def upgrade_saas(engine):
+    # Transitional V1.9 tenant columns. Existing legacy rows remain NULL and can be assigned
+    # after the first company is created; new SaaS endpoints always scope by company.
+    for table in ('social_connections','social_oauth_attempts','content_campaigns','content_variants','publications','product_contents'):
+        _add_columns(engine,table,{'company_id':'INTEGER NULL'})
+
+def upgrade_tenant_stage2(engine):
+    """V1.9 stage 2: tenant columns on all business/OAuth records."""
+    for table in ('products','product_prices','product_scores','meli_oauth_attempts','meli_oauth_tokens'):
+        _add_columns(engine, table, {'company_id':'INTEGER NULL'})
+    if engine.dialect.name == 'postgresql':
+        with engine.begin() as conn:
+            rows=conn.execute(text("""SELECT tc.constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name=ccu.constraint_name AND tc.table_schema=ccu.table_schema WHERE tc.table_schema=current_schema() AND tc.table_name='social_connections' AND tc.constraint_type='UNIQUE' AND ccu.column_name='platform'""")).fetchall()
+            for (name,) in rows:
+                safe=''.join(ch for ch in name if ch.isalnum() or ch=='_')
+                conn.execute(text(f'ALTER TABLE social_connections DROP CONSTRAINT IF EXISTS {safe}'))
+
+def upgrade_tenant_constraints(engine):
+    if engine.dialect.name != 'postgresql': return
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE products DROP CONSTRAINT IF EXISTS uq_product_marketplace_external'))
+        conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_product_company_marketplace_external_idx ON products(company_id, marketplace, external_id) WHERE company_id IS NOT NULL'))
+        conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_social_connection_company_platform_idx ON social_connections(company_id, platform) WHERE company_id IS NOT NULL'))
+        conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_meli_oauth_company_idx ON meli_oauth_tokens(company_id) WHERE company_id IS NOT NULL'))

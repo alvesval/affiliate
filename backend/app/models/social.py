@@ -1,12 +1,14 @@
 from datetime import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, Boolean
+from sqlalchemy import String, Text, DateTime, ForeignKey, Integer, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 
 class SocialConnection(Base):
+    __table_args__=(UniqueConstraint('company_id','platform',name='uq_social_connection_company_platform'),)
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     __tablename__='social_connections'
     id: Mapped[int]=mapped_column(primary_key=True)
-    platform: Mapped[str]=mapped_column(String(30), unique=True, index=True)
+    platform: Mapped[str]=mapped_column(String(30), index=True)
     account_name: Mapped[str]=mapped_column(String(180), default='')
     external_user_id: Mapped[str]=mapped_column(String(180), default='')
     access_token_enc: Mapped[str]=mapped_column(Text, default='')
@@ -16,6 +18,7 @@ class SocialConnection(Base):
     connected_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class SocialOAuthAttempt(Base):
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     __tablename__='social_oauth_attempts'
     id: Mapped[int]=mapped_column(primary_key=True)
     platform: Mapped[str]=mapped_column(String(30), index=True)
@@ -23,6 +26,7 @@ class SocialOAuthAttempt(Base):
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class ContentCampaign(Base):
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     __tablename__='content_campaigns'
     id: Mapped[int]=mapped_column(primary_key=True)
     product_id: Mapped[int]=mapped_column(ForeignKey('products.id'), index=True)
@@ -36,6 +40,7 @@ class ContentCampaign(Base):
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class ContentVariant(Base):
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     __tablename__='content_variants'
     id: Mapped[int]=mapped_column(primary_key=True)
     campaign_id: Mapped[int]=mapped_column(ForeignKey('content_campaigns.id'), index=True)
@@ -59,6 +64,7 @@ class ContentVariant(Base):
     status: Mapped[str]=mapped_column(String(30), default='draft')
 
 class Publication(Base):
+    company_id: Mapped[int|None]=mapped_column(Integer, nullable=True, index=True)
     __tablename__='publications'
     id: Mapped[int]=mapped_column(primary_key=True)
     campaign_id: Mapped[int]=mapped_column(ForeignKey('content_campaigns.id'), index=True)
