@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import get_db
 from app.models.entities import Product
+from app.models.saas import GrowthEvent
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
@@ -211,7 +212,10 @@ async def publication_status(publication_id:int,p:Principal=Depends(current_prin
     ids=data.get('publicaly_available_post_id') or data.get('publicly_available_post_id') or []
     if not isinstance(ids,list): ids=[ids] if ids else []
     pub.public_post_ids=','.join(str(x) for x in ids)
-    if status=='PUBLISH_COMPLETE':pub.status='published';pub.published_at=datetime.utcnow();pub.error_message=''
+    if status=='PUBLISH_COMPLETE':
+        pub.status='published';pub.published_at=datetime.utcnow();pub.error_message=''
+        exists=db.scalar(select(GrowthEvent.id).where(GrowthEvent.company_id==p.company_id,GrowthEvent.event_name=='first_publication').limit(1))
+        if not exists: db.add(GrowthEvent(company_id=p.company_id,user_id=p.user_id,event_name='first_publication',source='product'))
     elif status=='FAILED':pub.status='error';pub.error_message=data.get('fail_reason') or 'TikTok informou falha no processamento.'
     else:pub.status='processing'
     db.commit();return {**_publication_json(pub),'tiktok_status':data}

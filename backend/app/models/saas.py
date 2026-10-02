@@ -80,3 +80,55 @@ class ContentAutomationProfile(Base):
     require_human_approval: Mapped[bool]=mapped_column(Boolean, default=True)
     min_opportunity_score: Mapped[int]=mapped_column(Integer, default=60)
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+
+class GrowthEvent(Base):
+    __tablename__='growth_events'
+    id: Mapped[int]=mapped_column(primary_key=True)
+    company_id: Mapped[int|None]=mapped_column(ForeignKey('companies.id'), nullable=True, index=True)
+    user_id: Mapped[int|None]=mapped_column(ForeignKey('saas_users.id'), nullable=True, index=True)
+    event_name: Mapped[str]=mapped_column(String(80), index=True)
+    visitor_id: Mapped[str]=mapped_column(String(120), default='', index=True)
+    session_id: Mapped[str]=mapped_column(String(120), default='', index=True)
+    source: Mapped[str]=mapped_column(String(120), default='', index=True)
+    medium: Mapped[str]=mapped_column(String(120), default='')
+    campaign: Mapped[str]=mapped_column(String(180), default='')
+    content: Mapped[str]=mapped_column(String(180), default='')
+    term: Mapped[str]=mapped_column(String(180), default='')
+    referrer: Mapped[str]=mapped_column(String(1000), default='')
+    landing_path: Mapped[str]=mapped_column(String(500), default='')
+    metadata_json: Mapped[str]=mapped_column(Text, default='{}')
+    created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+class Referral(Base):
+    __tablename__='referrals'
+    id: Mapped[int]=mapped_column(primary_key=True)
+    referrer_company_id: Mapped[int|None]=mapped_column(ForeignKey('companies.id'), nullable=True, index=True)
+    referred_company_id: Mapped[int|None]=mapped_column(ForeignKey('companies.id'), nullable=True, index=True)
+    code: Mapped[str]=mapped_column(String(80), unique=True, index=True)
+    status: Mapped[str]=mapped_column(String(30), default='active')
+    created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+
+class UsageCounter(Base):
+    __tablename__='usage_counters'
+    __table_args__=(UniqueConstraint('company_id','period_key',name='uq_usage_company_period'),)
+    id: Mapped[int]=mapped_column(primary_key=True)
+    company_id: Mapped[int]=mapped_column(ForeignKey('companies.id'), index=True)
+    period_key: Mapped[str]=mapped_column(String(7), index=True)
+    campaigns_created: Mapped[int]=mapped_column(Integer, default=0)
+    publications_created: Mapped[int]=mapped_column(Integer, default=0)
+    ai_generations: Mapped[int]=mapped_column(Integer, default=0)
+    storage_bytes: Mapped[int]=mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+
+class ContentAutomationRun(Base):
+    __tablename__='content_automation_runs'
+    id: Mapped[int]=mapped_column(primary_key=True)
+    company_id: Mapped[int]=mapped_column(ForeignKey('companies.id'), index=True)
+    user_id: Mapped[int|None]=mapped_column(ForeignKey('saas_users.id'), nullable=True)
+    status: Mapped[str]=mapped_column(String(30), default='queued', index=True)
+    mode: Mapped[str]=mapped_column(String(40), default='opportunity_batch')
+    requested_count: Mapped[int]=mapped_column(Integer, default=0)
+    created_count: Mapped[int]=mapped_column(Integer, default=0)
+    detail_json: Mapped[str]=mapped_column(Text, default='{}')
+    created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True)

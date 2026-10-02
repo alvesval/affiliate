@@ -26,8 +26,15 @@ class Settings(BaseSettings):
     r2_secret_access_key: str = ""
     r2_bucket_name: str = ""
     media_max_upload_mb: int = 500
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_starter: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_business: str = ""
+    platform_admin_emails: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
 
 # Social publishing (V1.5)
+# V1.10 commercial SaaS

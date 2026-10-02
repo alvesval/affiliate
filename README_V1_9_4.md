@@ -1,4 +1,4 @@
-# AIAffiliateIntelligence V1.9.4 — Workspace UX
+# AIAffiliateIntelligence V1.10 — Workspace UX
 
 - Cabeçalho global em todas as telas autenticadas com empresa/workspace, plano, usuário e perfil.
 - Menu do usuário com Meu perfil, Segurança e Sair.
