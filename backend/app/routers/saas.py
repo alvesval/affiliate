@@ -5,7 +5,10 @@ from pydantic import BaseModel,EmailStr,Field
 from sqlalchemy import select,func
 from sqlalchemy.orm import Session
 from app.core.db import get_db
-from app.core.auth import hash_password,verify_password,create_token,current_principal,require_role,Principal
+from app.core.auth import (
+    hash_password, verify_password, password_needs_rehash, verify_dummy_password,
+    create_token, current_principal, require_role, Principal
+)
 from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,AuditEvent,ContentAutomationProfile
 
 router=APIRouter(prefix='/api/v1/saas',tags=['saas'])
@@ -37,9 +40,17 @@ def register(x:Register,db:Session=Depends(get_db)):
 @router.post('/auth/login')
 def login(x:Login,db:Session=Depends(get_db)):
     u=db.scalar(select(SaaSUser).where(func.lower(SaaSUser.email)==x.email.lower()))
-    if not u or not verify_password(x.password,u.password_hash): raise HTTPException(401,'E-mail ou senha inválidos')
+    if not u:
+        verify_dummy_password(x.password)
+        raise HTTPException(401,'E-mail ou senha inválidos')
+    if not verify_password(x.password,u.password_hash):
+        raise HTTPException(401,'E-mail ou senha inválidos')
     m=db.scalar(select(CompanyMember).where(CompanyMember.user_id==u.id,CompanyMember.status=='active').order_by(CompanyMember.id))
     if not m: raise HTTPException(403,'Usuário sem empresa ativa')
+    # Transparent migration: successful logins from old bcrypt accounts are
+    # immediately re-hashed with Argon2id. No password reset is required.
+    if password_needs_rehash(u.password_hash):
+        u.password_hash=hash_password(x.password)
     u.last_login_at=datetime.utcnow();db.commit()
     return {'access_token':create_token(u.id,m.company_id,m.role),'token_type':'bearer'}
 
