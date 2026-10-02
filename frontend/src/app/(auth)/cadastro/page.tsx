@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
+import Link from "next/link";
 import { API } from "../../../lib/saas";
 
 type FormState = {
@@ -113,8 +115,9 @@ export default function Cadastro() {
   }
 
   return (
-    <main className="public-page">
-      <section className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
+    <main className="auth-page">
+      <section className="card auth-card auth-card-wide">
+        <Link href="/" className="auth-logo" aria-label="Voltar para a página inicial"><Image src="/ai-affiliate-logo.png" alt="AIAffiliateIntelligence" width={220} height={110} priority /></Link>
         <span className="eyebrow">COMECE SEU TRIAL</span>
         <h1>Crie sua empresa</h1>
         <p className="muted">14 dias para configurar seu workspace e validar o fluxo.</p>
@@ -149,9 +152,7 @@ export default function Cadastro() {
           </button>
         </form>
 
-        <p className="muted" style={{ marginTop: 16 }}>
-          Já possui uma conta? <a href="/login">Entrar</a>
-        </p>
+        <p className="muted auth-switch">Já possui uma conta? <Link href="/login">Entrar</Link></p>
       </section>
     </main>
   );

@@ -7,7 +7,7 @@ from app.models.oauth import MercadoLivreOAuth, OAuthAttempt
 from app.models.saas import Company, SaaSUser, CompanyMember, Plan, Subscription, AuditEvent, ContentAutomationProfile
 from app.routers import mercadolivre
 from app.routers import products, dashboard, catalog, content, affiliates, social, saas
-app=FastAPI(title="Affiliate Intelligence API",version="1.9.3")
+app=FastAPI(title="Affiliate Intelligence API",version="1.9.4")
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000", "https://affiliate.alvaldeir.workers.dev", "https://iaaffintel.com",],allow_credentials=True,allow_methods=["*"],allow_headers=["*"] )
 from app.core.migrations import upgrade, upgrade_social, upgrade_saas, upgrade_tenant_stage2, upgrade_tenant_constraints
 upgrade(engine)
@@ -17,7 +17,7 @@ upgrade_tenant_stage2(engine)
 upgrade_tenant_constraints(engine)
 Base.metadata.create_all(bind=engine)
 @app.get("/health")
-def health(): return {"status":"ok","version":"1.9.3"}
+def health(): return {"status":"ok","version":"1.9.4"}
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(mercadolivre.router)

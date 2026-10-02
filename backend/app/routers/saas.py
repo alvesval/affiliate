@@ -14,6 +14,8 @@ from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,Aud
 router=APIRouter(prefix='/api/v1/saas',tags=['saas'])
 class Register(BaseModel): name:str=Field(min_length=2,max_length=140);email:EmailStr;password:str=Field(min_length=8,max_length=128);company_name:str=Field(min_length=2,max_length=180)
 class Login(BaseModel): email:EmailStr;password:str
+class ProfileUpdate(BaseModel): name:str=Field(min_length=2,max_length=140)
+class PasswordChange(BaseModel): current_password:str;new_password:str=Field(min_length=8,max_length=128)
 class MemberIn(BaseModel): email:EmailStr;name:str='';role:str='VIEWER'
 class RoleIn(BaseModel): role:str
 class ProfileIn(BaseModel): name:str='Autopilot padrão';enabled:bool=False;platforms:list[str]=['TikTok','Instagram'];tone:str='Direto e acessível';audience:str='';duration_seconds:int=30;daily_limit:int=3;require_human_approval:bool=True;min_opportunity_score:int=60
@@ -58,6 +60,21 @@ def login(x:Login,db:Session=Depends(get_db)):
 def me(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     u=db.get(SaaSUser,p.user_id);c=db.get(Company,p.company_id);s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);plan=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'TRIAL')))
     return {'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role},'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status},'subscription':{'plan':s.plan_code if s else 'TRIAL','status':s.status if s else 'trialing','trial_ends_at':s.trial_ends_at.isoformat() if s and s.trial_ends_at else None,'limits':json.loads(plan.limits_json) if plan else {}}}
+
+@router.patch('/profile')
+def update_profile(x:ProfileUpdate,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    u=db.get(SaaSUser,p.user_id)
+    if not u: raise HTTPException(404,'Usuário não encontrado')
+    u.name=x.name.strip();audit(db,p,'profile.updated','user',u.id);db.commit()
+    return {'saved':True,'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role}}
+
+@router.post('/security/password')
+def change_password(x:PasswordChange,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    u=db.get(SaaSUser,p.user_id)
+    if not u or not verify_password(x.current_password,u.password_hash): raise HTTPException(400,'Senha atual inválida')
+    if x.current_password==x.new_password: raise HTTPException(400,'A nova senha deve ser diferente da senha atual')
+    u.password_hash=hash_password(x.new_password);audit(db,p,'security.password_changed','user',u.id);db.commit()
+    return {'saved':True}
 
 @router.get('/members')
 def members(p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)):
