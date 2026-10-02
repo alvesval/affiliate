@@ -17,8 +17,21 @@ router=APIRouter(prefix='/api/integrations/mercadolivre',tags=['Mercado Livre OA
 AUTHORIZE_URL='https://auth.mercadolivre.com.br/authorization'; TOKEN_URL='https://api.mercadolibre.com/oauth/token'
 
 def configured():
-    if not all((settings.meli_client_id,settings.meli_client_secret,settings.meli_redirect_uri,settings.token_encryption_key)): raise HTTPException(503,'Configure as credenciais Mercado Livre e TOKEN_ENCRYPTION_KEY no backend')
-    if not settings.meli_redirect_uri.startswith('https://'): raise HTTPException(503,'MELI_REDIRECT_URI deve usar HTTPS')
+    required = {
+        "MELI_CLIENT_ID": settings.meli_client_id,
+        "MELI_CLIENT_SECRET": settings.meli_client_secret,
+        "MELI_REDIRECT_URI": settings.meli_redirect_uri,
+        "TOKEN_ENCRYPTION_KEY": settings.token_encryption_key,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise HTTPException(503, detail={
+            "code": "MELI_CONFIGURATION_INCOMPLETE",
+            "message": "Integração Mercado Livre ainda não está configurada no servidor.",
+            "missing": missing,
+        })
+    if not settings.meli_redirect_uri.startswith('https://'):
+        raise HTTPException(503, detail={"code":"MELI_REDIRECT_URI_INVALID","message":"MELI_REDIRECT_URI deve usar HTTPS."})
 def cipher():
     try:return Fernet(settings.token_encryption_key.encode())
     except (ValueError,TypeError) as e:raise HTTPException(503,'TOKEN_ENCRYPTION_KEY inválida') from e

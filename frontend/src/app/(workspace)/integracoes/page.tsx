@@ -3,7 +3,7 @@ import {useEffect,useState} from "react";
 import {apiFetch} from "../../../lib/api";
 type Conn={platform:string;configured:boolean;connected:boolean;account_name:string;expires_at?:string};
 export default function Page(){const [social,setSocial]=useState<Conn[]>([]),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[meli,setMeli]=useState<any>(null);
- async function api(path:string,method="GET",socialApi=false){setBusy(true);try{const r=await apiFetch(`${socialApi?'/api/v1/social':'/api/integrations/mercadolivre'}/${path}`,{method});const d=await r.json();if(!r.ok)throw Error(d.detail||JSON.stringify(d));return d}catch(e){setMessage(String(e));return null}finally{setBusy(false)}}
+ async function api(path:string,method="GET",socialApi=false){setBusy(true);try{const r=await apiFetch(`${socialApi?'/api/v1/social':'/api/integrations/mercadolivre'}/${path}`,{method});const d=await r.json();if(!r.ok){const detail=d?.detail;const msg=typeof detail==='string'?detail:(detail?.message||'Não foi possível concluir a operação.');const missing=Array.isArray(detail?.missing)?` Variáveis ausentes: ${detail.missing.join(', ')}.`:'';throw Error(msg+missing)}return d}catch(e){setMessage(String(e));return null}finally{setBusy(false)}}
  async function load(){const [m,s]=await Promise.all([api("status"),api("connections","GET",true)]);if(m)setMeli(m);if(s)setSocial(s)}
  useEffect(()=>{load()},[]);
  async function connectMeli(){const d=await api("authorize","POST");if(d?.authorization_url)location.assign(d.authorization_url)}
