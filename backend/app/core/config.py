@@ -28,13 +28,11 @@ class Settings(BaseSettings):
     media_max_upload_mb: int = 500
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    stripe_price_entry: str = ""
     stripe_price_starter: str = ""
     stripe_price_pro: str = ""
     stripe_price_business: str = ""
     platform_admin_emails: str = ""
-    openai_api_key: str = ""
-    openai_text_model: str = "gpt-5-mini"
-    openai_video_model: str = "sora-2"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

@@ -12,7 +12,7 @@ from app.core.auth import (
 from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,AuditEvent,ContentAutomationProfile,GrowthEvent,UsageCounter,ContentAutomationRun
 
 router=APIRouter(prefix='/api/v1/saas',tags=['saas'])
-class Register(BaseModel): name:str=Field(min_length=2,max_length=140);email:EmailStr;password:str=Field(min_length=8,max_length=128);company_name:str=Field(min_length=2,max_length=180)
+class Register(BaseModel): name:str=Field(min_length=2,max_length=140);email:EmailStr;password:str=Field(min_length=8,max_length=128);company_name:str=Field(min_length=2,max_length=180);plan_code:str='ENTRY'
 class Login(BaseModel): email:EmailStr;password:str
 class ProfileUpdate(BaseModel): name:str=Field(min_length=2,max_length=140)
 class PasswordChange(BaseModel): current_password:str;new_password:str=Field(min_length=8,max_length=128)
@@ -23,9 +23,28 @@ class ProfileIn(BaseModel): name:str='Autopilot padrão';enabled:bool=False;plat
 def slugify(s): return re.sub(r'[^a-z0-9]+','-',s.lower()).strip('-')[:100] or 'empresa'
 def audit(db,p,action,etype='',eid='',detail=None): db.add(AuditEvent(company_id=p.company_id,user_id=p.user_id,action=action,entity_type=etype,entity_id=str(eid),detail_json=json.dumps(detail or {},ensure_ascii=False)))
 def ensure_plans(db):
-    defaults=[('TRIAL','Trial',0,{'users':2,'campaigns_month':20,'publications_month':10,'storage_mb':500}),('STARTER','Starter',4900,{'users':2,'campaigns_month':60,'publications_month':40,'storage_mb':2048}),('PRO','Pro',9900,{'users':5,'campaigns_month':300,'publications_month':200,'storage_mb':10240}),('BUSINESS','Business',19900,{'users':15,'campaigns_month':1500,'publications_month':1000,'storage_mb':51200})]
+    # Commercial plans. No free trial: ENTRY is the low-cost paid access tier.
+    defaults=[
+      ('ENTRY','Entrada',2900,{'users':2,'campaigns_month':20,'publications_month':10,'ai_text_month':30,'ai_video_month':0,'storage_mb':500}),
+      ('STARTER','Starter',4900,{'users':2,'campaigns_month':60,'publications_month':40,'ai_text_month':100,'ai_video_month':2,'storage_mb':2048}),
+      ('PRO','Pro',9900,{'users':5,'campaigns_month':300,'publications_month':200,'ai_text_month':500,'ai_video_month':10,'storage_mb':10240}),
+      ('BUSINESS','Business',19900,{'users':15,'campaigns_month':1500,'publications_month':1000,'ai_text_month':2500,'ai_video_month':30,'storage_mb':51200}),
+    ]
+    wanted={x[0] for x in defaults}
     for code,name,price,limits in defaults:
-        if not db.scalar(select(Plan).where(Plan.code==code)): db.add(Plan(code=code,name=name,monthly_price_cents=price,limits_json=json.dumps(limits)))
+        row=db.scalar(select(Plan).where(Plan.code==code))
+        if not row:
+            row=Plan(code=code,name=name)
+            db.add(row)
+        row.name=name;row.monthly_price_cents=price;row.currency='BRL';row.limits_json=json.dumps(limits);row.active=True
+    # Historical TRIAL is retained only for referential safety and hidden from sale.
+    trial=db.scalar(select(Plan).where(Plan.code=='TRIAL'))
+    if trial: trial.active=False
+    # One-time commercial transition: existing trial workspaces become ENTRY awaiting payment.
+    for sub in db.scalars(select(Subscription).where(Subscription.plan_code=='TRIAL')).all():
+        sub.plan_code='ENTRY';sub.status='incomplete';sub.trial_ends_at=None
+        company=db.get(Company,sub.company_id)
+        if company and company.status=='trial': company.status='pending_payment'
     db.commit()
 
 @router.post('/auth/register')
@@ -33,9 +52,12 @@ def register(x:Register,db:Session=Depends(get_db)):
     if db.scalar(select(SaaSUser).where(func.lower(SaaSUser.email)==x.email.lower())): raise HTTPException(409,'E-mail já cadastrado')
     base=slugify(x.company_name);slug=base;n=1
     while db.scalar(select(Company).where(Company.slug==slug)): n+=1;slug=f'{base}-{n}'
-    c=Company(name=x.company_name.strip(),slug=slug,status='trial');u=SaaSUser(name=x.name.strip(),email=x.email.lower(),password_hash=hash_password(x.password))
+    ensure_plans(db)
+    plan_code=x.plan_code.upper().strip()
+    if plan_code not in {'ENTRY','STARTER','PRO','BUSINESS'}: raise HTTPException(422,'Plano inválido')
+    c=Company(name=x.company_name.strip(),slug=slug,status='pending_payment');u=SaaSUser(name=x.name.strip(),email=x.email.lower(),password_hash=hash_password(x.password))
     db.add_all([c,u]);db.flush();m=CompanyMember(company_id=c.id,user_id=u.id,role='OWNER');db.add(m)
-    db.add(Subscription(company_id=c.id,plan_code='TRIAL',status='trialing',trial_ends_at=datetime.utcnow()+timedelta(days=14)))
+    db.add(Subscription(company_id=c.id,plan_code=plan_code,status='incomplete',trial_ends_at=None))
     db.add(ContentAutomationProfile(company_id=c.id));db.add(GrowthEvent(company_id=c.id,user_id=u.id,event_name='signup_completed',source='product'));db.commit()
     return {'access_token':create_token(u.id,c.id,'OWNER'),'token_type':'bearer','company':{'id':c.id,'name':c.name,'slug':c.slug},'user':{'id':u.id,'name':u.name,'email':u.email,'role':'OWNER'}}
 
@@ -58,8 +80,8 @@ def login(x:Login,db:Session=Depends(get_db)):
 
 @router.get('/me')
 def me(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
-    u=db.get(SaaSUser,p.user_id);c=db.get(Company,p.company_id);s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);plan=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'TRIAL')))
-    return {'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role},'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status},'subscription':{'plan':s.plan_code if s else 'TRIAL','status':s.status if s else 'trialing','trial_ends_at':s.trial_ends_at.isoformat() if s and s.trial_ends_at else None,'limits':json.loads(plan.limits_json) if plan else {}}}
+    u=db.get(SaaSUser,p.user_id);c=db.get(Company,p.company_id);s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);plan=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'ENTRY')))
+    return {'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role},'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status},'subscription':{'plan':s.plan_code if s else 'ENTRY','status':s.status if s else 'incomplete','trial_ends_at':s.trial_ends_at.isoformat() if s and s.trial_ends_at else None,'limits':json.loads(plan.limits_json) if plan else {}}}
 
 @router.patch('/profile')
 def update_profile(x:ProfileUpdate,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -109,11 +131,11 @@ def onboarding(p:Principal=Depends(current_principal),db:Session=Depends(get_db)
     from app.models.social import SocialConnection,ContentCampaign,Publication
     from app.models.oauth import MercadoLivreOAuth
     integrations=db.scalars(select(SocialConnection).where(SocialConnection.company_id==p.company_id)).all()
+    meli_connected=bool(db.scalar(select(MercadoLivreOAuth).where(MercadoLivreOAuth.company_id==p.company_id)))
     products=db.scalar(select(func.count(Product.id)).where(Product.company_id==p.company_id)) or 0
     campaigns=db.scalar(select(func.count(ContentCampaign.id)).where(ContentCampaign.company_id==p.company_id)) or 0
     publications=db.scalar(select(func.count(Publication.id)).where(Publication.company_id==p.company_id,Publication.status=='published')) or 0
     platforms={x.platform for x in integrations}
-    meli_connected=bool(db.scalar(select(MercadoLivreOAuth.id).where(MercadoLivreOAuth.company_id==p.company_id).limit(1)))
     steps=[
       {'key':'workspace','label':'Workspace criado','done':True,'href':'/dashboard'},
       {'key':'marketplace','label':'Conectar Mercado Livre','done':meli_connected,'href':'/integracoes'},
@@ -127,7 +149,7 @@ def onboarding(p:Principal=Depends(current_principal),db:Session=Depends(get_db)
 @router.get('/usage')
 def usage(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     key=datetime.utcnow().strftime('%Y-%m');u=db.scalar(select(UsageCounter).where(UsageCounter.company_id==p.company_id,UsageCounter.period_key==key))
-    s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);pl=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'TRIAL')));limits=json.loads(pl.limits_json) if pl else {}
+    s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);pl=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'ENTRY')));limits=json.loads(pl.limits_json) if pl else {}
     return {'period':key,'campaigns_created':u.campaigns_created if u else 0,'publications_created':u.publications_created if u else 0,'ai_generations':u.ai_generations if u else 0,'storage_bytes':u.storage_bytes if u else 0,'limits':limits}
 
 @router.get('/automation-profile')
@@ -147,21 +169,20 @@ def audits(p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)
 
 @router.post('/automation/prepare')
 def prepare_content(p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
-    from app.models.entities import Product, ProductScore
+    from app.models.entities import Product
     from app.models.social import ContentCampaign, ContentVariant
     from app.routers.social import _variant, PLATFORMS
+    from app.services.scoring import calculate_score
     profile=db.scalar(select(ContentAutomationProfile).where(ContentAutomationProfile.company_id==p.company_id))
     if not profile or not profile.enabled: raise HTTPException(409,'Ative a preparação automática antes de executar.')
     platforms=[x for x in profile.platforms_csv.split(',') if x in PLATFORMS]
     if not platforms: raise HTTPException(422,'Nenhuma plataforma válida configurada.')
-    # Calculate opportunities from current verified product facts.
-    from app.services.scoring import calculate_score
-    candidates=db.scalars(select(Product).where(Product.company_id==p.company_id,Product.affiliate_url!='',Product.commission_rate>0)).all()
-    rows=[]
-    for product in candidates:
-        score_data=calculate_score(product.price,product.original_price,product.commission_rate)
-        if score_data['score'] >= profile.min_opportunity_score: rows.append((product,score_data))
-    rows=sorted(rows,key=lambda x:x[1]['score'],reverse=True)[:profile.daily_limit]
+    # Same live, explainable score used by Opportunities. No stale ProductScore dependency.
+    candidates=[]
+    for product in db.scalars(select(Product).where(Product.company_id==p.company_id,Product.affiliate_url!='',Product.commission_rate>0)).all():
+        score=calculate_score(product.price,product.original_price,product.commission_rate)
+        if score['score']>=profile.min_opportunity_score: candidates.append((product,score))
+    rows=sorted(candidates,key=lambda x:x[1]['score'],reverse=True)[:profile.daily_limit]
     run=ContentAutomationRun(company_id=p.company_id,user_id=p.user_id,status='running',requested_count=profile.daily_limit);db.add(run);db.flush();created=[]
     for product,score in rows:
         c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective='Venda',format='Vídeo curto',duration_seconds=profile.duration_seconds,tone=profile.tone,audience=profile.audience,status='draft')

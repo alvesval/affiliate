@@ -10,7 +10,7 @@ from app.models.saas import Subscription,Plan,Company,GrowthEvent
 
 router=APIRouter(prefix='/api/v1/billing',tags=['billing'])
 
-def _price(plan): return {'STARTER':settings.stripe_price_starter,'PRO':settings.stripe_price_pro,'BUSINESS':settings.stripe_price_business}.get(plan,'')
+def _price(plan): return {'ENTRY':settings.stripe_price_entry,'STARTER':settings.stripe_price_starter,'PRO':settings.stripe_price_pro,'BUSINESS':settings.stripe_price_business}.get(plan,'')
 
 @router.post('/checkout/{plan_code}')
 def checkout(plan_code:str,p:Principal=Depends(require_role('OWNER')),db:Session=Depends(get_db)):
@@ -44,10 +44,15 @@ async def webhook(request:Request,db:Session=Depends(get_db)):
         s=db.scalar(select(Subscription).where(Subscription.company_id==cid))
         if s:
             s.provider='stripe';s.provider_customer_id=obj.get('customer') or '';s.provider_subscription_id=obj.get('subscription') or '';s.plan_code=plan;s.status='active'
+            company=db.get(Company,cid)
+            if company: company.status='active'
             db.add(GrowthEvent(company_id=cid,event_name='subscription_started',source='stripe',metadata_json=json.dumps({'plan':plan})))
     elif typ in ('customer.subscription.updated','customer.subscription.deleted'):
         sid=obj.get('id');s=db.scalar(select(Subscription).where(Subscription.provider_subscription_id==sid))
         if s:
             status=obj.get('status','');s.status='canceled' if typ.endswith('deleted') else status
-            if typ.endswith('deleted'): db.add(GrowthEvent(company_id=s.company_id,event_name='subscription_canceled',source='stripe'))
+            if typ.endswith('deleted'):
+                company=db.get(Company,s.company_id)
+                if company: company.status='suspended'
+                db.add(GrowthEvent(company_id=s.company_id,event_name='subscription_canceled',source='stripe'))
     db.commit();return {'received':True}

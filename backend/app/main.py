@@ -6,7 +6,7 @@ from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampa
 from app.models.oauth import MercadoLivreOAuth, OAuthAttempt
 from app.models.saas import Company, SaaSUser, CompanyMember, Plan, Subscription, AuditEvent, ContentAutomationProfile, GrowthEvent, Referral, UsageCounter, ContentAutomationRun
 from app.routers import mercadolivre
-from app.routers import products, dashboard, catalog, content, affiliates, social, saas, growth, billing, ai_studio
+from app.routers import products, dashboard, catalog, content, affiliates, social, saas, growth, billing
 app=FastAPI(title="Affiliate Intelligence API",version="1.11.0")
 app.add_middleware(CORSMiddleware,allow_origins=["http://localhost:3000", "https://affiliate.alvaldeir.workers.dev", "https://iaaffintel.com",],allow_credentials=True,allow_methods=["*"],allow_headers=["*"] )
 from app.core.migrations import upgrade, upgrade_social, upgrade_saas, upgrade_tenant_stage2, upgrade_tenant_constraints
@@ -31,5 +31,3 @@ app.include_router(social.router)
 app.include_router(saas.router)
 app.include_router(growth.router)
 app.include_router(billing.router)
-
-app.include_router(ai_studio.router)

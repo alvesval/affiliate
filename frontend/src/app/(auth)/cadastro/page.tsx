@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
@@ -34,6 +34,8 @@ async function readApiMessage(response: Response): Promise<{ access_token?: stri
 
 export default function Cadastro() {
   const router = useRouter();
+  const [planCode,setPlanCode] = useState("ENTRY");
+  useEffect(()=>{const requested=(new URLSearchParams(window.location.search).get("plan")||"ENTRY").toUpperCase();setPlanCode(["ENTRY","STARTER","PRO","BUSINESS"].includes(requested)?requested:"ENTRY")},[]);
   const [form, setForm] = useState<FormState>(initialForm);
   const [message, setMessage] = useState("");
   const [success, setSuccess] = useState("");
@@ -84,6 +86,7 @@ export default function Cadastro() {
           email,
           company_name: companyName,
           password: form.password,
+          plan_code: planCode,
         }),
         signal: controller.signal,
       });
@@ -99,8 +102,8 @@ export default function Cadastro() {
       }
 
       localStorage.setItem("ai_token", data.access_token);
-      setSuccess("Workspace criado com sucesso. Abrindo o painel...");
-      router.replace("/dashboard");
+      setSuccess("Workspace criado. Agora escolha a forma de pagamento para ativar o plano.");
+      router.replace(`/plano?select=${planCode}`);
       router.refresh();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -118,9 +121,9 @@ export default function Cadastro() {
     <main className="auth-page">
       <section className="card auth-card auth-card-wide">
         <Link href="/" className="auth-logo" aria-label="Voltar para a página inicial"><Image src="/ai-affiliate-logo.png" alt="AIAffiliateIntelligence" width={220} height={110} priority /></Link>
-        <span className="eyebrow">COMECE SEU TRIAL</span>
+        <span className="eyebrow">CRIE SEU WORKSPACE</span>
         <h1>Crie sua empresa</h1>
-        <p className="muted">14 dias para configurar seu workspace e validar o fluxo.</p>
+        <p className="muted">Escolha um plano pago e ative seu workspace. Não há cobrança gratuita automática.</p>
 
         <form onSubmit={submit} noValidate>
           <div className="field">
