@@ -107,14 +107,16 @@ def plans(db:Session=Depends(get_db)):
 def onboarding(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     from app.models.entities import Product
     from app.models.social import SocialConnection,ContentCampaign,Publication
+    from app.models.oauth import MercadoLivreOAuth
     integrations=db.scalars(select(SocialConnection).where(SocialConnection.company_id==p.company_id)).all()
     products=db.scalar(select(func.count(Product.id)).where(Product.company_id==p.company_id)) or 0
     campaigns=db.scalar(select(func.count(ContentCampaign.id)).where(ContentCampaign.company_id==p.company_id)) or 0
     publications=db.scalar(select(func.count(Publication.id)).where(Publication.company_id==p.company_id,Publication.status=='published')) or 0
     platforms={x.platform for x in integrations}
+    meli_connected=bool(db.scalar(select(MercadoLivreOAuth.id).where(MercadoLivreOAuth.company_id==p.company_id).limit(1)))
     steps=[
       {'key':'workspace','label':'Workspace criado','done':True,'href':'/dashboard'},
-      {'key':'marketplace','label':'Conectar Mercado Livre','done':'mercadolivre' in {x.lower() for x in platforms},'href':'/integracoes'},
+      {'key':'marketplace','label':'Conectar Mercado Livre','done':meli_connected,'href':'/integracoes'},
       {'key':'social','label':'Conectar TikTok','done':'tiktok' in {x.lower() for x in platforms},'href':'/integracoes'},
       {'key':'product','label':'Adicionar primeiro produto','done':products>0,'href':'/produtos'},
       {'key':'content','label':'Criar primeiro conteúdo','done':campaigns>0,'href':'/conteudos'},
@@ -152,9 +154,14 @@ def prepare_content(p:Principal=Depends(require_role('EDITOR')),db:Session=Depen
     if not profile or not profile.enabled: raise HTTPException(409,'Ative a preparação automática antes de executar.')
     platforms=[x for x in profile.platforms_csv.split(',') if x in PLATFORMS]
     if not platforms: raise HTTPException(422,'Nenhuma plataforma válida configurada.')
-    # Latest score per product; still deterministic and auditable. AI generation is a separate provider step.
-    latest=select(ProductScore.product_id,func.max(ProductScore.id).label('max_id')).where(ProductScore.company_id==p.company_id).group_by(ProductScore.product_id).subquery()
-    rows=db.execute(select(Product,ProductScore).join(latest,latest.c.product_id==Product.id).join(ProductScore,ProductScore.id==latest.c.max_id).where(Product.company_id==p.company_id,ProductScore.company_id==p.company_id,Product.affiliate_url!='',ProductScore.score>=profile.min_opportunity_score).order_by(ProductScore.score.desc()).limit(profile.daily_limit)).all()
+    # Calculate opportunities from current verified product facts.
+    from app.services.scoring import calculate_score
+    candidates=db.scalars(select(Product).where(Product.company_id==p.company_id,Product.affiliate_url!='',Product.commission_rate>0)).all()
+    rows=[]
+    for product in candidates:
+        score_data=calculate_score(product.price,product.original_price,product.commission_rate)
+        if score_data['score'] >= profile.min_opportunity_score: rows.append((product,score_data))
+    rows=sorted(rows,key=lambda x:x[1]['score'],reverse=True)[:profile.daily_limit]
     run=ContentAutomationRun(company_id=p.company_id,user_id=p.user_id,status='running',requested_count=profile.daily_limit);db.add(run);db.flush();created=[]
     for product,score in rows:
         c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective='Venda',format='Vídeo curto',duration_seconds=profile.duration_seconds,tone=profile.tone,audience=profile.audience,status='draft')
@@ -162,7 +169,7 @@ def prepare_content(p:Principal=Depends(require_role('EDITOR')),db:Session=Depen
         for platform in platforms:
             hook,caption,script,tags,cta=_variant(product,platform,profile.duration_seconds,profile.tone,profile.audience)
             db.add(ContentVariant(company_id=p.company_id,campaign_id=c.id,platform=platform,title=product.title[:300],hook=hook,caption=caption,script=script,hashtags=tags,cta=cta,affiliate_url=product.affiliate_url,affiliate_label=product.affiliate_label,link_placement='bio' if platform=='TikTok' else 'caption',status='draft'))
-        created.append({'campaign_id':c.id,'product_id':product.id,'score':score.score,'title':product.title})
+        created.append({'campaign_id':c.id,'product_id':product.id,'score':score['score'],'title':product.title})
     key=datetime.utcnow().strftime('%Y-%m');usage=db.scalar(select(UsageCounter).where(UsageCounter.company_id==p.company_id,UsageCounter.period_key==key)) or UsageCounter(company_id=p.company_id,period_key=key);usage.campaigns_created+=len(created);db.add(usage);run.status='completed';run.created_count=len(created);run.finished_at=datetime.utcnow();run.detail_json=json.dumps({'campaign_ids':[x['campaign_id'] for x in created]});audit(db,p,'automation.prepared','campaign','',{'count':len(created),'approval_required':profile.require_human_approval});db.commit()
     return {'created':len(created),'campaigns':created,'approval_required':profile.require_human_approval,'note':'Conteúdos preparados como rascunho; nenhuma publicação foi enviada automaticamente.'}
 

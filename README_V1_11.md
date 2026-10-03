@@ -1,0 +1,1 @@
+V1.11: onboarding Mercado Livre corrigido; oportunidades automáticas por link+comissão; Autopilot salva antes de executar; AI Studio com OpenAI Responses + Sora e armazenamento R2. Variáveis: OPENAI_API_KEY, OPENAI_TEXT_MODEL (gpt-5-mini), OPENAI_VIDEO_MODEL (sora-2). Vídeo inicial: 8s vertical 720x1280; revisão humana obrigatória antes da publicação.
