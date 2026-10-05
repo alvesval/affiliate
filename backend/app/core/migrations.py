@@ -88,3 +88,10 @@ def upgrade_v112(engine):
     _add_columns(engine,"usage_counters",{
         "ai_video_generations":"INTEGER NOT NULL DEFAULT 0",
     })
+
+
+def upgrade_v113(engine):
+    _add_columns(engine,"plans",{
+        "stripe_price_id":"VARCHAR(180) NOT NULL DEFAULT ''",
+        "stripe_product_id":"VARCHAR(180) NOT NULL DEFAULT ''",
+    })

@@ -41,6 +41,8 @@ class Plan(Base):
     monthly_price_cents: Mapped[int]=mapped_column(Integer, default=0)
     currency: Mapped[str]=mapped_column(String(10), default='BRL')
     limits_json: Mapped[str]=mapped_column(Text, default='{}')
+    stripe_price_id: Mapped[str]=mapped_column(String(180), default='')
+    stripe_product_id: Mapped[str]=mapped_column(String(180), default='')
 
 class Subscription(Base):
     __tablename__='subscriptions'

@@ -10,17 +10,25 @@ from app.core.config import settings
 from app.models.saas import Subscription,Plan,Company,GrowthEvent,SaaSUser
 
 router=APIRouter(prefix='/api/v1/billing',tags=['billing'])
+webhook_router=APIRouter(tags=['billing'])
 
 def _prices():
     return {'ENTRY':settings.stripe_price_entry,'STARTER':settings.stripe_price_starter,'PRO':settings.stripe_price_pro,'BUSINESS':settings.stripe_price_business}
-def _price(plan): return _prices().get(plan,'')
-def _plan_from_price(price_id):
+def _price(plan,db=None):
+    if db:
+        row=db.scalar(select(Plan).where(Plan.code==plan))
+        if row and row.stripe_price_id: return row.stripe_price_id
+    return _prices().get(plan,'')
+def _plan_from_price(price_id,db=None):
+    if db and price_id:
+        row=db.scalar(select(Plan).where(Plan.stripe_price_id==price_id))
+        if row: return row.code
     return next((code for code,pid in _prices().items() if pid and pid==price_id),None)
 def _dt(ts):
     return datetime.fromtimestamp(ts,tz=timezone.utc).replace(tzinfo=None) if ts else None
 
 def _stripe_ready():
-    return bool(settings.stripe_secret_key and any(_prices().values()))
+    return bool(settings.stripe_secret_key)
 
 @router.get('/status')
 def billing_status(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -29,7 +37,7 @@ def billing_status(p:Principal=Depends(current_principal),db:Session=Depends(get
 
 @router.post('/checkout/{plan_code}')
 def checkout(plan_code:str,p:Principal=Depends(require_role('OWNER')),db:Session=Depends(get_db)):
-    plan_code=plan_code.upper().strip(); price=_price(plan_code)
+    plan_code=plan_code.upper().strip(); price=_price(plan_code,db)
     if plan_code not in _prices(): raise HTTPException(422,'Plano inválido')
     if not settings.stripe_secret_key: raise HTTPException(503,'STRIPE_SECRET_KEY não configurada no backend')
     if not price: raise HTTPException(503,f'Price ID do plano {plan_code} não configurado. Use STRIPE_PRICE_{plan_code}=price_...')
@@ -58,7 +66,48 @@ def portal(p:Principal=Depends(require_role('OWNER')),db:Session=Depends(get_db)
     except stripe.StripeError as e: raise HTTPException(502,f'Não foi possível abrir o portal Stripe: {getattr(e,"user_message",None) or str(e)}')
     return {'url':session.url}
 
+def _platform_admin(p,db):
+    u=db.get(SaaSUser,p.user_id)
+    configured={x.strip().lower() for x in settings.platform_admin_emails.split(',') if x.strip()}
+    if not p.is_super_admin and (not u or u.email.lower() not in configured):
+        raise HTTPException(403,'Acesso restrito à administração da plataforma')
+    return u
+
+@router.get('/admin/plans')
+def admin_plans(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    _platform_admin(p,db)
+    rows=db.scalars(select(Plan).order_by(Plan.monthly_price_cents)).all()
+    return [{'code':x.code,'name':x.name,'monthly_price_cents':x.monthly_price_cents,'currency':x.currency,'active':x.active,'stripe_price_id':x.stripe_price_id,'stripe_product_id':x.stripe_product_id,'limits':json.loads(x.limits_json or '{}')} for x in rows if x.code!='TRIAL']
+
+@router.put('/admin/plans/{plan_code}')
+def update_plan_price(plan_code:str,request_data:dict,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    _platform_admin(p,db)
+    code=plan_code.upper().strip(); row=db.scalar(select(Plan).where(Plan.code==code))
+    if not row or code=='TRIAL': raise HTTPException(404,'Plano não encontrado')
+    try: cents=int(request_data.get('monthly_price_cents'))
+    except Exception: raise HTTPException(422,'Preço mensal inválido')
+    if cents < 100: raise HTTPException(422,'Preço mensal deve ser de pelo menos R$ 1,00')
+    create_stripe=bool(request_data.get('create_stripe_price',True))
+    old_price=row.stripe_price_id or _prices().get(code,'')
+    new_price_id=old_price; product_id=row.stripe_product_id
+    if create_stripe:
+        if not settings.stripe_secret_key: raise HTTPException(503,'STRIPE_SECRET_KEY não configurada')
+        stripe.api_key=settings.stripe_secret_key
+        try:
+            if not product_id and old_price:
+                old=stripe.Price.retrieve(old_price); product_id=str(old.get('product') or '')
+            if not product_id:
+                product=stripe.Product.create(name=f'AIAffiliateIntelligence {row.name}',metadata={'plan_code':code}); product_id=product.id
+            price=stripe.Price.create(product=product_id,unit_amount=cents,currency='brl',recurring={'interval':'month'},metadata={'plan_code':code})
+            new_price_id=price.id
+        except stripe.StripeError as e:
+            raise HTTPException(502,f'Não foi possível criar o novo preço no Stripe: {getattr(e,"user_message",None) or str(e)}')
+    row.monthly_price_cents=cents; row.stripe_price_id=new_price_id or ''; row.stripe_product_id=product_id or ''
+    db.commit()
+    return {'saved':True,'code':code,'monthly_price_cents':cents,'stripe_price_id':row.stripe_price_id,'stripe_product_id':row.stripe_product_id,'previous_stripe_price_id':old_price}
+
 @router.post('/webhook')
+@webhook_router.post('/billing/webhook/stripe')
 async def webhook(request:Request,db:Session=Depends(get_db)):
     if not settings.stripe_secret_key or not settings.stripe_webhook_secret: raise HTTPException(503,'Webhook Stripe não configurado')
     stripe.api_key=settings.stripe_secret_key
@@ -82,7 +131,7 @@ async def webhook(request:Request,db:Session=Depends(get_db)):
         if s:
             s.provider='stripe';s.provider_customer_id=obj.get('customer') or s.provider_customer_id;s.provider_subscription_id=sid or s.provider_subscription_id
             items=((obj.get('items') or {}).get('data') or []); price_id=((items[0].get('price') or {}).get('id') if items else '')
-            mapped=_plan_from_price(price_id) or (obj.get('metadata') or {}).get('plan_code')
+            mapped=_plan_from_price(price_id,db) or (obj.get('metadata') or {}).get('plan_code')
             if mapped: s.plan_code=mapped
             status=obj.get('status','');s.status='canceled' if typ.endswith('deleted') else status;s.current_period_end=_dt(obj.get('current_period_end'))
             company=db.get(Company,s.company_id)

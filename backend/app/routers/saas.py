@@ -25,18 +25,23 @@ def audit(db,p,action,etype='',eid='',detail=None): db.add(AuditEvent(company_id
 def ensure_plans(db):
     # Commercial plans. No free trial: ENTRY is the low-cost paid access tier.
     defaults=[
-      ('ENTRY','Entrada',2900,{'users':2,'campaigns_month':20,'publications_month':10,'ai_text_month':30,'ai_video_month':0,'storage_mb':500}),
-      ('STARTER','Starter',4900,{'users':2,'campaigns_month':60,'publications_month':40,'ai_text_month':100,'ai_video_month':2,'storage_mb':2048}),
-      ('PRO','Pro',9900,{'users':5,'campaigns_month':300,'publications_month':200,'ai_text_month':500,'ai_video_month':10,'storage_mb':10240}),
-      ('BUSINESS','Business',19900,{'users':15,'campaigns_month':1500,'publications_month':1000,'ai_text_month':2500,'ai_video_month':30,'storage_mb':51200}),
+      ('ENTRY','Entrada',4900,{'users':2,'campaigns_month':20,'publications_month':10,'ai_text_month':30,'ai_video_month':0,'storage_mb':500}),
+      ('STARTER','Starter',7900,{'users':2,'campaigns_month':60,'publications_month':40,'ai_text_month':100,'ai_video_month':2,'storage_mb':2048}),
+      ('PRO','Pro',19900,{'users':5,'campaigns_month':300,'publications_month':200,'ai_text_month':500,'ai_video_month':10,'storage_mb':10240}),
+      ('BUSINESS','Business',29900,{'users':15,'campaigns_month':1500,'publications_month':1000,'ai_text_month':2500,'ai_video_month':30,'storage_mb':51200}),
     ]
     wanted={x[0] for x in defaults}
     for code,name,price,limits in defaults:
         row=db.scalar(select(Plan).where(Plan.code==code))
         if not row:
-            row=Plan(code=code,name=name)
+            row=Plan(code=code,name=name,monthly_price_cents=price,currency='BRL',limits_json=json.dumps(limits),active=True)
             db.add(row)
-        row.name=name;row.monthly_price_cents=price;row.currency='BRL';row.limits_json=json.dumps(limits);row.active=True
+        else:
+            row.name=name; row.currency='BRL'; row.limits_json=json.dumps(limits); row.active=True
+            # Migrate only the known legacy catalogue values. Afterwards the admin price is persistent.
+            legacy={'ENTRY':2900,'STARTER':4900,'PRO':9900,'BUSINESS':19900}
+            target={'ENTRY':4900,'STARTER':7900,'PRO':19900,'BUSINESS':29900}
+            if row.monthly_price_cents==legacy.get(code): row.monthly_price_cents=target[code]
     # Historical TRIAL is retained only for referential safety and hidden from sale.
     trial=db.scalar(select(Plan).where(Plan.code=='TRIAL'))
     if trial: trial.active=False
