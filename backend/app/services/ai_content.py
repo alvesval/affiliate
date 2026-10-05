@@ -28,15 +28,11 @@ async def generate_copy(product,platform,duration,tone,audience):
     if r.status_code>=400:raise HTTPException(502,f'Falha na IA de texto ({r.status_code}): {r.text[:250]}')
     return parse_json(output_text(r.json()))
 async def start_video(prompt,seconds=8):
-    seconds=min((4,8,12),key=lambda x:abs(x-seconds))
-    async with httpx.AsyncClient(timeout=60) as c:r=await c.post(BASE+'/videos',headers=headers(),data={'model':settings.openai_video_model,'prompt':prompt,'seconds':str(seconds),'size':'720x1280'})
-    if r.status_code>=400:raise HTTPException(502,f'Falha ao iniciar vídeo IA ({r.status_code}): {r.text[:250]}')
-    return r.json()
+    from app.services.video_provider import get_video_provider
+    return await get_video_provider().start(prompt,seconds)
 async def video_status(video_id):
-    async with httpx.AsyncClient(timeout=45) as c:r=await c.get(BASE+f'/videos/{video_id}',headers=headers())
-    if r.status_code>=400:raise HTTPException(502,f'Falha ao consultar vídeo IA ({r.status_code}).')
-    return r.json()
+    from app.services.video_provider import get_video_provider
+    return await get_video_provider().status(video_id)
 async def download_video(video_id):
-    async with httpx.AsyncClient(timeout=120) as c:r=await c.get(BASE+f'/videos/{video_id}/content',headers=headers())
-    if r.status_code>=400:raise HTTPException(502,f'Falha ao baixar vídeo IA ({r.status_code}).')
-    return r.content
+    from app.services.video_provider import get_video_provider
+    return await get_video_provider().download(video_id)

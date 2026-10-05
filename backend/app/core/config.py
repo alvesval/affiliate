@@ -29,7 +29,11 @@ class Settings(BaseSettings):
     # OpenAI Content Studio
     openai_api_key: str = ""
     openai_text_model: str = "gpt-5.6-luna"
-    openai_video_model: str = "sora-2"
+    openai_video_model: str = "sora-2"  # legado; não usado pelo provider fal
+    # V1.13.2 - Video Provider
+    video_provider: str = "fal"
+    fal_key: str = ""
+    fal_video_model: str = "fal-ai/kling-video/v3/standard/text-to-video"
     # Comma-separated extra browser origins, e.g. https://app.example.com
     cors_origins: str = ""
     stripe_secret_key: str = ""
