@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     r2_secret_access_key: str = ""
     r2_bucket_name: str = ""
     media_max_upload_mb: int = 500
+    # OpenAI Content Studio
+    openai_api_key: str = ""
+    openai_text_model: str = "gpt-5.6-luna"
+    openai_video_model: str = "sora-2"
+    # Comma-separated extra browser origins, e.g. https://app.example.com
+    cors_origins: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_price_entry: str = ""

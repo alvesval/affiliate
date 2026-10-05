@@ -150,7 +150,7 @@ def onboarding(p:Principal=Depends(current_principal),db:Session=Depends(get_db)
 def usage(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     key=datetime.utcnow().strftime('%Y-%m');u=db.scalar(select(UsageCounter).where(UsageCounter.company_id==p.company_id,UsageCounter.period_key==key))
     s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);pl=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'ENTRY')));limits=json.loads(pl.limits_json) if pl else {}
-    return {'period':key,'campaigns_created':u.campaigns_created if u else 0,'publications_created':u.publications_created if u else 0,'ai_generations':u.ai_generations if u else 0,'storage_bytes':u.storage_bytes if u else 0,'limits':limits}
+    return {'period':key,'campaigns_created':u.campaigns_created if u else 0,'publications_created':u.publications_created if u else 0,'ai_generations':u.ai_generations if u else 0,'ai_video_generations':getattr(u,'ai_video_generations',0) if u else 0,'storage_bytes':u.storage_bytes if u else 0,'limits':limits}
 
 @router.get('/automation-profile')
 def get_profile(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):

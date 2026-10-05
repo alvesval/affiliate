@@ -1,11 +1,14 @@
 from fastapi import APIRouter,Depends,HTTPException
 from pydantic import BaseModel,Field
 from sqlalchemy import select
+from datetime import datetime
+import json
 from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.auth import require_role,Principal
 from app.models.entities import Product
 from app.models.social import ContentCampaign,ContentVariant
+from app.models.saas import Subscription,Plan,UsageCounter
 from app.services.ai_content import generate_copy,start_video,video_status,download_video
 from app.services.media_storage import build_key,put_bytes,delete as delete_media
 router=APIRouter(prefix='/api/v1/ai-studio',tags=['AI Content Studio'])
@@ -30,8 +33,27 @@ async def generate(x:GenerateIn,p:Principal=Depends(require_role('EDITOR')),db:S
     return {'variant_id':v.id,'video_prompt':str(d.get('video_prompt') or '')}
 @router.post('/video/start')
 async def video_start(x:VideoIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
-    v,c,pr=ctx(db,p.company_id,x.variant_id);prompt=x.prompt.strip() or f'Vertical 9:16 social ad for {pr.title}. Clean product presentation, no invented claims or on-screen prices.';d=await start_video(prompt,x.seconds)
-    return {'variant_id':v.id,'video_id':d.get('id'),'status':d.get('status'),'progress':d.get('progress',0),'seconds':d.get('seconds')}
+    v,c,pr=ctx(db,p.company_id,x.variant_id)
+    sub=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id))
+    plan_code=(sub.plan_code if sub else 'ENTRY').upper()
+    plan=db.scalar(select(Plan).where(Plan.code==plan_code))
+    limits=json.loads(plan.limits_json or '{}') if plan else {}
+    limit=int(limits.get('ai_video_month',0) or 0)
+    key=datetime.utcnow().strftime('%Y-%m')
+    usage=db.scalar(select(UsageCounter).where(UsageCounter.company_id==p.company_id,UsageCounter.period_key==key))
+    used=int(getattr(usage,'ai_video_generations',0) or 0) if usage else 0
+    if limit <= 0:
+        raise HTTPException(402,f'O plano {plan_code} não inclui geração de vídeo com IA. Faça upgrade em Plano e assinatura.')
+    if used >= limit:
+        raise HTTPException(402,f'Limite mensal de vídeos IA atingido ({used}/{limit}). Faça upgrade do plano para continuar.')
+    prompt=x.prompt.strip() or f'Vertical 9:16 social ad for {pr.title}. Clean product presentation, no invented claims or on-screen prices.'
+    d=await start_video(prompt,x.seconds)
+    if not usage:
+        usage=UsageCounter(company_id=p.company_id,period_key=key)
+        db.add(usage)
+    usage.ai_video_generations=used+1
+    db.commit()
+    return {'variant_id':v.id,'video_id':d.get('id'),'status':d.get('status'),'progress':d.get('progress',0),'seconds':d.get('seconds'),'usage':{'used':used+1,'limit':limit}}
 @router.post('/video/status')
 async def poll(x:StatusIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
     v,c,pr=ctx(db,p.company_id,x.variant_id);d=await video_status(x.video_id);status=d.get('status','')

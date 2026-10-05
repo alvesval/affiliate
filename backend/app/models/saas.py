@@ -117,6 +117,7 @@ class UsageCounter(Base):
     campaigns_created: Mapped[int]=mapped_column(Integer, default=0)
     publications_created: Mapped[int]=mapped_column(Integer, default=0)
     ai_generations: Mapped[int]=mapped_column(Integer, default=0)
+    ai_video_generations: Mapped[int]=mapped_column(Integer, default=0)
     storage_bytes: Mapped[int]=mapped_column(Integer, default=0)
     updated_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 

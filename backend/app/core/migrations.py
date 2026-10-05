@@ -82,3 +82,9 @@ def upgrade_tenant_constraints(engine):
         conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_product_company_marketplace_external_idx ON products(company_id, marketplace, external_id) WHERE company_id IS NOT NULL'))
         conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_social_connection_company_platform_idx ON social_connections(company_id, platform) WHERE company_id IS NOT NULL'))
         conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS uq_meli_oauth_company_idx ON meli_oauth_tokens(company_id) WHERE company_id IS NOT NULL'))
+
+
+def upgrade_v112(engine):
+    _add_columns(engine,"usage_counters",{
+        "ai_video_generations":"INTEGER NOT NULL DEFAULT 0",
+    })
