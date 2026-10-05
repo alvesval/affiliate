@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     stripe_price_pro: str = ""
     stripe_price_business: str = ""
     platform_admin_emails: str = ""
+    # V1.13.3 - Transactional e-mail / password recovery
+    resend_api_key: str = ""
+    email_from: str = "AIAffiliateIntelligence <noreply@iaaffintel.com>"
+    password_reset_minutes: int = 30
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

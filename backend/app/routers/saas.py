@@ -1,19 +1,23 @@
-import json,re
+import json,re,secrets,hashlib
 from datetime import datetime,timedelta
 from fastapi import APIRouter,Depends,HTTPException
 from pydantic import BaseModel,EmailStr,Field
 from sqlalchemy import select,func
 from sqlalchemy.orm import Session
 from app.core.db import get_db
+from app.core.config import settings
+from app.services.email_service import send_password_reset_email, EmailDeliveryError
 from app.core.auth import (
     hash_password, verify_password, password_needs_rehash, verify_dummy_password,
     create_token, current_principal, require_role, Principal
 )
-from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,AuditEvent,ContentAutomationProfile,GrowthEvent,UsageCounter,ContentAutomationRun
+from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,AuditEvent,ContentAutomationProfile,GrowthEvent,UsageCounter,ContentAutomationRun,PasswordResetToken
 
 router=APIRouter(prefix='/api/v1/saas',tags=['saas'])
 class Register(BaseModel): name:str=Field(min_length=2,max_length=140);email:EmailStr;password:str=Field(min_length=8,max_length=128);company_name:str=Field(min_length=2,max_length=180);plan_code:str='ENTRY'
 class Login(BaseModel): email:EmailStr;password:str
+class ForgotPassword(BaseModel): email:EmailStr
+class ResetPassword(BaseModel): token:str=Field(min_length=32,max_length=512);new_password:str=Field(min_length=8,max_length=128);password_confirmation:str=Field(min_length=8,max_length=128)
 class ProfileUpdate(BaseModel): name:str=Field(min_length=2,max_length=140)
 class PasswordChange(BaseModel): current_password:str;new_password:str=Field(min_length=8,max_length=128)
 class MemberIn(BaseModel): email:EmailStr;name:str='';role:str='VIEWER'
@@ -82,6 +86,52 @@ def login(x:Login,db:Session=Depends(get_db)):
         u.password_hash=hash_password(x.password)
     u.last_login_at=datetime.utcnow();db.commit()
     return {'access_token':create_token(u.id,m.company_id,m.role),'token_type':'bearer'}
+
+@router.post('/auth/forgot-password')
+def forgot_password(x:ForgotPassword,db:Session=Depends(get_db)):
+    # Always return the same public response to prevent account enumeration.
+    public={'sent':True,'message':'Se existir uma conta com esse e-mail, enviaremos as instruções para redefinir a senha.'}
+    u=db.scalar(select(SaaSUser).where(func.lower(SaaSUser.email)==x.email.lower()))
+    if not u or not u.is_active:
+        return public
+    now=datetime.utcnow()
+    # Invalidate earlier unused links before issuing a new one.
+    old=db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id==u.id,PasswordResetToken.used_at.is_(None))).all()
+    for item in old: item.used_at=now
+    raw=secrets.token_urlsafe(48)
+    digest=hashlib.sha256(raw.encode()).hexdigest()
+    expires=now+timedelta(minutes=max(5,settings.password_reset_minutes))
+    db.add(PasswordResetToken(user_id=u.id,token_hash=digest,expires_at=expires))
+    db.commit()
+    reset_url=f"{settings.frontend_url.rstrip('/')}/redefinir-senha?token={raw}"
+    try:
+        send_password_reset_email(u.email,reset_url)
+    except EmailDeliveryError:
+        # Do not expose provider/configuration details to the public endpoint.
+        # Invalidate the token because no usable e-mail was delivered.
+        token=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
+        if token: token.used_at=datetime.utcnow(); db.commit()
+    return public
+
+@router.post('/auth/reset-password')
+def reset_password(x:ResetPassword,db:Session=Depends(get_db)):
+    if x.new_password!=x.password_confirmation:
+        raise HTTPException(422,'As senhas não conferem')
+    digest=hashlib.sha256(x.token.encode()).hexdigest()
+    item=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
+    now=datetime.utcnow()
+    if not item or item.used_at is not None or item.expires_at < now:
+        raise HTTPException(400,'Link inválido ou expirado. Solicite uma nova redefinição de senha.')
+    u=db.get(SaaSUser,item.user_id)
+    if not u or not u.is_active:
+        raise HTTPException(400,'Link inválido ou expirado. Solicite uma nova redefinição de senha.')
+    u.password_hash=hash_password(x.new_password)
+    # Consume every outstanding reset token for this user.
+    outstanding=db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id==u.id,PasswordResetToken.used_at.is_(None))).all()
+    for token in outstanding: token.used_at=now
+    db.add(AuditEvent(company_id=None,user_id=u.id,action='security.password_reset',entity_type='user',entity_id=str(u.id),detail_json='{}'))
+    db.commit()
+    return {'saved':True,'message':'Senha redefinida com sucesso.'}
 
 @router.get('/me')
 def me(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):

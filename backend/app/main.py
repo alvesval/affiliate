@@ -4,11 +4,11 @@ from app.core.db import Base, engine, SessionLocal
 from app.models.entities import Product, ProductContent
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication
 from app.models.oauth import MercadoLivreOAuth, OAuthAttempt
-from app.models.saas import Company, SaaSUser, CompanyMember, Plan, Subscription, AuditEvent, ContentAutomationProfile, GrowthEvent, Referral, UsageCounter, ContentAutomationRun
+from app.models.saas import Company, SaaSUser, CompanyMember, Plan, Subscription, AuditEvent, ContentAutomationProfile, GrowthEvent, Referral, UsageCounter, ContentAutomationRun, PasswordResetToken
 from app.routers import mercadolivre
 from app.routers import products, dashboard, catalog, content, affiliates, social, saas, growth, billing, ai_studio
 from app.core.config import settings
-app=FastAPI(title="Affiliate Intelligence API",version="1.13.2")
+app=FastAPI(title="Affiliate Intelligence API",version="1.13.3")
 _default_origins=["http://localhost:3000","http://127.0.0.1:3000","https://affiliate.alvaldeir.workers.dev","https://iaaffintel.com","https://www.iaaffintel.com"]
 _extra=[x.strip().rstrip('/') for x in settings.cors_origins.split(',') if x.strip()]
 _origins=list(dict.fromkeys(_default_origins+_extra+[settings.frontend_url.rstrip('/')]))
@@ -23,7 +23,7 @@ upgrade_v112(engine)
 upgrade_v113(engine)
 Base.metadata.create_all(bind=engine)
 @app.get("/health")
-def health(): return {"status":"ok","version":"1.13.2","ai_video_configured":bool(settings.fal_key),"video_provider":settings.video_provider,"video_model":settings.fal_video_model,"stripe_configured":bool(settings.stripe_secret_key)}
+def health(): return {"status":"ok","version":"1.13.3","ai_video_configured":bool(settings.fal_key),"video_provider":settings.video_provider,"video_model":settings.fal_video_model,"stripe_configured":bool(settings.stripe_secret_key)}
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(mercadolivre.router)
