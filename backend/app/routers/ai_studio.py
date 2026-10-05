@@ -35,6 +35,6 @@ async def video_start(x:VideoIn,p:Principal=Depends(require_role('EDITOR')),db:S
 @router.post('/video/status')
 async def poll(x:StatusIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
     v,c,pr=ctx(db,p.company_id,x.variant_id);d=await video_status(x.video_id);status=d.get('status','')
-    if status=='completed' and not v.media_storage_key:
+    if status=='completed':
         raw=await download_video(x.video_id);old=v.media_storage_key;key=build_key(v.id,'ai-video.mp4');put_bytes(key,raw,'video/mp4');v.media_storage_key=key;v.media_filename='ai-video.mp4';v.media_content_type='video/mp4';v.media_size=len(raw);v.media_duration_seconds=int(d.get('seconds') or 0);v.media_url='';db.commit();delete_media(old)
     err=d.get('error') or {};return {'variant_id':v.id,'video_id':x.video_id,'status':status,'progress':d.get('progress',0),'error':err.get('message') if isinstance(err,dict) else str(err or ''),'attached':bool(v.media_storage_key)}
