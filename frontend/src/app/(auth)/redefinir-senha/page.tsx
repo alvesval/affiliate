@@ -1,7 +1,47 @@
 'use client';
-import {FormEvent,useState} from 'react';
+
+import {FormEvent, Suspense, useState} from 'react';
 import {useSearchParams} from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import {API} from '../../../lib/api';
-export default function ResetPassword(){const params=useSearchParams();const token=params.get('token')||'';const[password,setPassword]=useState('');const[confirm,setConfirm]=useState('');const[msg,setMsg]=useState('');const[ok,setOk]=useState(false);const[busy,setBusy]=useState(false);async function submit(e:FormEvent){e.preventDefault();setMsg('');if(password.length<8){setMsg('A nova senha deve ter no mínimo 8 caracteres.');return}if(password!==confirm){setMsg('As senhas não conferem.');return}if(!token){setMsg('Link de redefinição inválido.');return}setBusy(true);try{const r=await fetch(`${API}/api/v1/saas/auth/reset-password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,new_password:password,password_confirmation:confirm})});const d=await r.json().catch(()=>({}));if(!r.ok){setMsg(d.detail||'Não foi possível redefinir a senha.');return}setOk(true);setMsg('Senha redefinida com sucesso. Você já pode entrar com a nova senha.')}catch{setMsg('Não foi possível conectar à API. Tente novamente.')}finally{setBusy(false)}}return <main className="auth-page"><section className="card auth-card"><Link href="/" className="auth-logo"><Image src="/ai-affiliate-logo.png" alt="AIAffiliateIntelligence" width={220} height={110} priority/></Link><span className="eyebrow">SEGURANÇA</span><h1>Redefinir senha</h1><p className="muted">Crie uma nova senha para sua conta.</p>{!ok&&<form onSubmit={submit}><div className="field"><label>Nova senha</label><input type="password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required autoComplete="new-password"/></div><div className="field"><label>Confirmar nova senha</label><input type="password" minLength={8} value={confirm} onChange={e=>setConfirm(e.target.value)} required autoComplete="new-password"/></div>{msg&&<div className="alert">{msg}</div>}<button disabled={busy} className="btn primary auth-submit">{busy?'Salvando...':'Redefinir senha'}</button></form>}{ok&&<><div className="alert">{msg}</div><Link className="btn primary auth-submit" href="/login">Entrar</Link></>}</section></main>}
+
+function ResetPasswordContent(){
+  const params=useSearchParams();
+  const token=params.get('token')||'';
+  const[password,setPassword]=useState('');
+  const[confirm,setConfirm]=useState('');
+  const[msg,setMsg]=useState('');
+  const[ok,setOk]=useState(false);
+  const[busy,setBusy]=useState(false);
+
+  async function submit(e:FormEvent){
+    e.preventDefault();
+    setMsg('');
+    if(password.length<8){setMsg('A nova senha deve ter no mínimo 8 caracteres.');return}
+    if(password!==confirm){setMsg('As senhas não conferem.');return}
+    if(!token){setMsg('Link de redefinição inválido.');return}
+    setBusy(true);
+    try{
+      const r=await fetch(`${API}/api/v1/saas/auth/reset-password`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token,new_password:password,password_confirmation:confirm})
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){setMsg(d.detail||'Não foi possível redefinir a senha.');return}
+      setOk(true);
+      setMsg('Senha redefinida com sucesso. Você já pode entrar com a nova senha.');
+    }catch{
+      setMsg('Não foi possível conectar à API. Tente novamente.');
+    }finally{
+      setBusy(false);
+    }
+  }
+
+  return <main className="auth-page"><section className="card auth-card"><Link href="/" className="auth-logo"><Image src="/ai-affiliate-logo.png" alt="AIAffiliateIntelligence" width={220} height={110} priority/></Link><span className="eyebrow">SEGURANÇA</span><h1>Redefinir senha</h1><p className="muted">Crie uma nova senha para sua conta.</p>{!ok&&<form onSubmit={submit}><div className="field"><label>Nova senha</label><input type="password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required autoComplete="new-password"/></div><div className="field"><label>Confirmar nova senha</label><input type="password" minLength={8} value={confirm} onChange={e=>setConfirm(e.target.value)} required autoComplete="new-password"/></div>{msg&&<div className="alert">{msg}</div>}<button disabled={busy} className="btn primary auth-submit">{busy?'Salvando...':'Redefinir senha'}</button></form>}{ok&&<><div className="alert">{msg}</div><Link className="btn primary auth-submit" href="/login">Entrar</Link></>}</section></main>;
+}
+
+export default function ResetPassword(){
+  return <Suspense fallback={<main className="auth-page"><section className="card auth-card"><p className="muted">Carregando...</p></section></main>}><ResetPasswordContent/></Suspense>;
+}
