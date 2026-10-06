@@ -33,3 +33,12 @@
 .table .action-col{width:132px;min-width:132px;text-align:right;white-space:nowrap}
 .table .btn-compact{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:8px 12px;line-height:1.1;white-space:nowrap;font-size:13px;border-radius:9px}
 @media(max-width:750px){.table .action-col{width:120px;min-width:120px}.table .btn-compact{padding:7px 10px;font-size:12px}}
+
+/* v1.15 RC3.3 - feedback de publicação e clareza dos canais */
+.floating-alert{position:fixed;top:18px;right:22px;z-index:1200;max-width:min(560px,calc(100vw - 44px));margin:0;display:flex;align-items:flex-start;gap:14px;box-shadow:0 14px 40px rgba(0,0,0,.35)}
+.floating-alert.error{border-color:#d45b6a;background:#4a1f2a;color:#ffd9de}
+.alert-close{border:0;background:transparent;color:inherit;font-size:22px;line-height:1;padding:0 0 0 6px;margin-left:auto;cursor:pointer}
+.campaign-channels{margin:8px 0 0;color:#9fc2e8;font-size:13px}
+.publish-channel-summary{padding:10px 12px;margin:0 0 12px;border:1px solid #344b67;border-radius:10px;background:#0b1728;color:#bcd2e9;font-size:13px}
+.modal-error{margin:0 0 14px}
+@media(max-width:750px){.floating-alert{top:10px;right:10px;left:10px;max-width:none}}
