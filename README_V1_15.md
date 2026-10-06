@@ -26,3 +26,12 @@ PINTEREST_REDIRECT_URI=https://SEU_BACKEND/api/v1/social/pinterest/callback
 4. Criar webhook LIVE apontando para /billing/webhook/stripe e configurar o whsec_ correspondente.
 5. Validar checkout, invoice.paid, payment_failed, portal, cancelamento e atualização do workspace.
 6. Não copiar chaves para Git/ZIP.
+
+## RC2 — Production Readiness
+
+- Limites comerciais centralizados e aplicados a campanhas, publicações e gerações de texto por IA.
+- Recursos pagos exigem assinatura ativa (`active`/`trialing`), evitando consumo antes da confirmação do Stripe.
+- Contadores mensais passam a ser consumidos no fluxo principal de campanhas/publicações.
+- Onboarding inclui ativação de cobrança e aceita qualquer rede social conectada como etapa social concluída.
+- Pinterest expõe estado comercial `pending_trial | trial | standard` separadamente das credenciais OAuth, permitindo UX correta enquanto a aprovação externa está pendente.
+- Versão da API atualizada para `1.15.0-rc2`.

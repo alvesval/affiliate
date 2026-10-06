@@ -197,10 +197,13 @@ def onboarding(p:Principal=Depends(current_principal),db:Session=Depends(get_db)
     campaigns=db.scalar(select(func.count(ContentCampaign.id)).where(ContentCampaign.company_id==p.company_id)) or 0
     publications=db.scalar(select(func.count(Publication.id)).where(Publication.company_id==p.company_id,Publication.status=='published')) or 0
     platforms={x.platform for x in integrations}
+    sub=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id))
+    billing_active=bool(sub and sub.status in {'active','trialing'})
     steps=[
       {'key':'workspace','label':'Workspace criado','done':True,'href':'/dashboard'},
+      {'key':'billing','label':'Ativar plano e cobrança','done':billing_active,'href':'/plano'},
       {'key':'marketplace','label':'Conectar Mercado Livre','done':meli_connected,'href':'/integracoes'},
-      {'key':'social','label':'Conectar TikTok','done':'tiktok' in {x.lower() for x in platforms},'href':'/integracoes'},
+      {'key':'social','label':'Conectar uma rede social','done':bool({x.lower() for x in platforms} & {'tiktok','pinterest','instagram','youtube shorts'}),'href':'/integracoes'},
       {'key':'product','label':'Adicionar primeiro produto','done':products>0,'href':'/produtos'},
       {'key':'content','label':'Criar primeiro conteúdo','done':campaigns>0,'href':'/conteudos'},
       {'key':'publish','label':'Fazer primeira publicação','done':publications>0,'href':'/conteudos'},

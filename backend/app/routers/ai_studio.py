@@ -14,6 +14,7 @@ from app.models.entities import Product
 from app.models.social import ContentCampaign,ContentVariant,ProductVisualReference
 from app.models.saas import Subscription,Plan,UsageCounter
 from app.services.ai_content import generate_copy,start_video,video_status,download_video
+from app.services.plan_limits import enforce_monthly_limit, consume
 from app.services.media_storage import build_key,put_bytes,get_bytes,presigned_get_url,delete as delete_media,MediaStorageError
 router=APIRouter(prefix='/api/v1/ai-studio',tags=['AI Content Studio'])
 class GenerateIn(BaseModel):variant_id:int
@@ -120,8 +121,9 @@ def configured(p:Principal=Depends(require_role('EDITOR'))):
     return {'configured':bool(settings.openai_api_key),'text_model':settings.openai_text_model,'video_configured':bool(settings.fal_key),'video_provider':settings.video_provider,'video_model':settings.fal_video_model}
 @router.post('/generate')
 async def generate(x:GenerateIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    usage,_,_=enforce_monthly_limit(db,p.company_id,'ai_text_month','ai_generations',1)
     v,c,pr=ctx(db,p.company_id,x.variant_id);d=await generate_copy(pr,v.platform,c.duration_seconds,c.tone,c.audience)
-    v.title=str(d.get('title') or pr.title)[:300];v.hook=str(d.get('hook') or '')[:500];v.script=str(d.get('script') or '');v.caption=str(d.get('caption') or '');v.hashtags=str(d.get('hashtags') or '');v.cta=str(d.get('cta') or '')[:500];db.commit()
+    v.title=str(d.get('title') or pr.title)[:300];v.hook=str(d.get('hook') or '')[:500];v.script=str(d.get('script') or '');v.caption=str(d.get('caption') or '');v.hashtags=str(d.get('hashtags') or '');v.cta=str(d.get('cta') or '')[:500];consume(usage,'ai_generations',1);db.commit()
     return {'variant_id':v.id,'video_prompt':str(d.get('video_prompt') or '')}
 @router.post('/video/start')
 async def video_start(x:VideoIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):

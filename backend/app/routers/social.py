@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.models.entities import Product
 from app.models.saas import GrowthEvent
+from app.services.plan_limits import enforce_monthly_limit, consume
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication, ProductVisualReference
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
@@ -74,6 +75,7 @@ def products(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
 
 @router.post('/campaigns')
 def create_campaign(data:CampaignRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    usage,_,_=enforce_monthly_limit(db,p.company_id,'campaigns_month','campaigns_created',1)
     product=db.scalar(select(Product).where(Product.id==data.product_id,Product.company_id==p.company_id))
     if not product: raise HTTPException(404,'Produto não encontrado')
     if not product.affiliate_url: raise HTTPException(409,'Produto sem link de afiliado')
@@ -85,6 +87,7 @@ def create_campaign(data:CampaignRequest,p:Principal=Depends(require_role('EDITO
     for platform in platforms:
         hook,caption,script,tags,cta=_variant(product,platform,data.duration_seconds,data.tone,data.audience)
         db.add(ContentVariant(company_id=p.company_id,campaign_id=c.id,platform=platform,title=product.title[:300],hook=hook,caption=caption,script=script,hashtags=tags,cta=cta,affiliate_url=product.affiliate_url,affiliate_label=product.affiliate_label,link_placement='bio' if platform=='TikTok' else 'caption',status='draft'))
+    consume(usage,'campaigns_created',1)
     db.commit();return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'variants':[_variant_json(v) for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all()],'publications':[]}
 
 @router.get('/campaigns')
@@ -193,6 +196,7 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
         if data.tiktok_brand_content and data.tiktok_privacy_level=='SELF_ONLY':raise HTTPException(422,'TikTok não permite Branded Content com visibilidade Somente eu. Use uma opção de privacidade compatível quando o app estiver auditado.')
     if any(v.platform=='Pinterest' for v in vs) and not data.pinterest_board_id.strip():
         raise HTTPException(422,'Selecione o board do Pinterest antes de publicar.')
+    usage,_,_=enforce_monthly_limit(db,p.company_id,'publications_month','publications_created',len(vs))
     created=[]
     for v in vs:
         if v.platform=='TikTok' and not v.media_storage_key:raise HTTPException(422,'Adicione um vídeo à variação TikTok antes de colocar na fila.')
@@ -207,6 +211,7 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
                 product=db.get(Product,c.product_id);pub.pinterest_cover_url=(product.image_url if product else '') or ''
             if not pub.pinterest_cover_url: raise HTTPException(422,'Pinterest exige uma imagem de capa/referência real do produto.')
         db.add(pub);db.flush();created.append(pub.id)
+    consume(usage,'publications_created',len(created))
     c.status='scheduled' if data.scheduled_at else 'queued';db.commit();return {'campaign_id':c.id,'publication_ids':created,'status':c.status}
 
 async def _execute(pub:Publication,db:Session):
@@ -252,7 +257,8 @@ async def publication_status(publication_id:int,p:Principal=Depends(current_prin
 def connections(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     found={x.platform:x for x in db.scalars(select(SocialConnection).where(SocialConnection.company_id==p.company_id)).all()}
     config={'TikTok':bool(settings.tiktok_client_key and settings.tiktok_client_secret and settings.tiktok_redirect_uri),'Instagram':bool(settings.meta_app_id and settings.meta_app_secret and settings.meta_redirect_uri),'YouTube Shorts':bool(settings.youtube_client_id and settings.youtube_client_secret and settings.youtube_redirect_uri),'Pinterest':bool(settings.pinterest_client_id and settings.pinterest_client_secret and settings.pinterest_redirect_uri)}
-    return [{'platform':p,'configured':config[p],'connected':p in found,'account_name':found[p].account_name if p in found else '','expires_at':found[p].expires_at.isoformat() if p in found and found[p].expires_at else None} for p in PLATFORMS]
+    access={'Pinterest':settings.pinterest_access_status}
+    return [{'platform':p,'configured':config[p],'connected':p in found,'account_name':found[p].account_name if p in found else '','expires_at':found[p].expires_at.isoformat() if p in found and found[p].expires_at else None,'access_status':access.get(p,'ready')} for p in PLATFORMS]
 
 @router.post('/tiktok/authorize')
 def tiktok_authorize(p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)):
