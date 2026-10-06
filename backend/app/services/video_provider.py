@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class VideoProvider:
     name='base'
-    async def start(self,prompt:str,seconds:int)->dict: raise NotImplementedError
+    async def start(self,prompt:str,seconds:int,images:list[str]|None=None)->dict: raise NotImplementedError
     async def status(self,job_id:str,status_url:str|None=None)->dict: raise NotImplementedError
     async def download(self,job_id:str,response_url:str|None=None)->bytes: raise NotImplementedError
 
@@ -41,12 +41,23 @@ class FalVideoProvider(VideoProvider):
         logger.warning('[FAL] URL de fila inválida recebida; usando fallback. host=%s', urlparse(candidate).hostname if candidate else '')
         return fallback
 
-    async def start(self,prompt:str,seconds:int)->dict:
+    async def start(self,prompt:str,seconds:int,images:list[str]|None=None)->dict:
         seconds=max(3,min(15,int(seconds)))
-        payload={'prompt':prompt,'duration':str(seconds),'aspect_ratio':'9:16','generate_audio':False}
-        logger.info('[FAL] Submit iniciado model=%s duration=%ss',self.model,seconds)
+        refs=[x for x in (images or []) if x][:3]
+        model=(settings.fal_image_video_model if refs else self.model).strip('/')
+        base=f'https://queue.fal.run/{model}'
+        if refs:
+            # The real product is an explicit visual element. Primary image is also the first frame.
+            payload={'prompt':prompt,'duration':str(seconds),'start_image_url':refs[0],'generate_audio':False,
+                     'negative_prompt':'distorted package, altered logo, changed label, invented text, wrong product, blur, low quality',
+                     'cfg_scale':0.65}
+            if len(refs)>1:
+                payload['elements']=[{'frontal_image_url':refs[0],'reference_image_urls':refs[1:]}]
+        else:
+            payload={'prompt':prompt,'duration':str(seconds),'aspect_ratio':'9:16','generate_audio':False}
+        logger.info('[FAL] Submit iniciado model=%s duration=%ss visual_refs=%s',model,seconds,len(refs))
         async with httpx.AsyncClient(timeout=60) as c:
-            r=await c.post(self.base,headers=self.headers(),json=payload)
+            r=await c.post(base,headers=self.headers(),json=payload)
         if r.status_code>=400:
             logger.error('[FAL] Submit falhou HTTP=%s body=%s',r.status_code,r.text[:500])
             raise HTTPException(502,f'Falha ao iniciar vídeo IA/fal ({r.status_code}): {r.text[:300]}')
@@ -56,10 +67,10 @@ class FalVideoProvider(VideoProvider):
             raise HTTPException(502,'fal.ai não retornou request_id para o vídeo.')
         # IMPORTANT: fal returns canonical queue URLs. They can differ from simply
         # appending /requests/... to a model endpoint, so preserve and reuse them.
-        status_url=self._safe_queue_url(d.get('status_url'),f'{self.base}/requests/{rid}/status')
-        response_url=self._safe_queue_url(d.get('response_url'),f'{self.base}/requests/{rid}')
+        status_url=self._safe_queue_url(d.get('status_url'),f'{base}/requests/{rid}/status')
+        response_url=self._safe_queue_url(d.get('response_url'),f'{base}/requests/{rid}')
         logger.info('[FAL] Submit aceito request_id=%s status_url=%s response_url=%s',rid,status_url,response_url)
-        return {'id':rid,'status':'queued','progress':0,'seconds':seconds,'provider':self.name,'model':self.model,'status_url':status_url,'response_url':response_url}
+        return {'id':rid,'status':'queued','progress':0,'seconds':seconds,'provider':self.name,'model':model,'status_url':status_url,'response_url':response_url}
 
     async def _status_raw(self,job_id:str,status_url:str|None=None):
         fallback=f'{self.base}/requests/{job_id}/status'

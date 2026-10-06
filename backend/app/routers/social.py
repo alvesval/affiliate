@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.models.entities import Product
 from app.models.saas import GrowthEvent
-from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication
+from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication, ProductVisualReference
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
 from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status
@@ -102,6 +102,11 @@ def campaign_detail(campaign_id:int,p:Principal=Depends(current_principal),db:Se
 def approve(campaign_id:int,data:ApprovalRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
     c=db.scalar(select(ContentCampaign).where(ContentCampaign.id==campaign_id,ContentCampaign.company_id==p.company_id))
     if not c: raise HTTPException(404,'Campanha não encontrada')
+    if data.approved:
+        variants=db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all()
+        if any((v.media_filename or '').startswith('ai-video-') for v in variants):
+            refs=db.scalars(select(ProductVisualReference).where(ProductVisualReference.company_id==p.company_id,ProductVisualReference.campaign_id==c.id)).all()
+            if not refs: raise HTTPException(409,'Vídeo gerado por IA sem referência visual real do produto. Adicione uma foto real antes de aprovar.')
     c.status='approved' if data.approved else 'draft'
     for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all():v.status=c.status
     db.commit();return {'id':c.id,'status':c.status}

@@ -90,3 +90,24 @@ class Publication(Base):
     uploaded_bytes: Mapped[int]=mapped_column(Integer, default=0)
     public_post_ids: Mapped[str]=mapped_column(Text, default='')
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+
+class ProductVisualReference(Base):
+    """Auditable real-product reference used by the creative/video pipeline."""
+    __tablename__='product_visual_references'
+    id: Mapped[int]=mapped_column(primary_key=True)
+    company_id: Mapped[int]=mapped_column(Integer,index=True)
+    campaign_id: Mapped[int]=mapped_column(ForeignKey('content_campaigns.id'),index=True)
+    product_id: Mapped[int]=mapped_column(ForeignKey('products.id'),index=True)
+    storage_key: Mapped[str]=mapped_column(String(1000),default='')
+    filename: Mapped[str]=mapped_column(String(500),default='')
+    content_type: Mapped[str]=mapped_column(String(100),default='')
+    size_bytes: Mapped[int]=mapped_column(Integer,default=0)
+    width: Mapped[int]=mapped_column(Integer,default=0)
+    height: Mapped[int]=mapped_column(Integer,default=0)
+    sha256: Mapped[str]=mapped_column(String(64),default='',index=True)
+    source_type: Mapped[str]=mapped_column(String(40),default='upload')
+    source_url: Mapped[str]=mapped_column(String(2000),default='')
+    is_primary: Mapped[bool]=mapped_column(Boolean,default=False)
+    position: Mapped[int]=mapped_column(Integer,default=1)
+    validated_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)

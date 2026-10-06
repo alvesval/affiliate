@@ -27,9 +27,9 @@ async def generate_copy(product,platform,duration,tone,audience):
     async with httpx.AsyncClient(timeout=90) as c:r=await c.post(BASE+'/responses',headers={**headers(),'Content-Type':'application/json'},json={'model':settings.openai_text_model,'input':prompt})
     if r.status_code>=400:raise HTTPException(502,f'Falha na IA de texto ({r.status_code}): {r.text[:250]}')
     return parse_json(output_text(r.json()))
-async def start_video(prompt,seconds=8):
+async def start_video(prompt,seconds=8,images=None):
     from app.services.video_provider import get_video_provider
-    return await get_video_provider().start(prompt,seconds)
+    return await get_video_provider().start(prompt,seconds,images)
 async def video_status(video_id,status_url=None):
     from app.services.video_provider import get_video_provider
     return await get_video_provider().status(video_id,status_url)

@@ -43,3 +43,11 @@ def delete(key:str)->None:
     if not key:return
     try:_client().delete_object(Bucket=settings.r2_bucket_name,Key=key)
     except Exception:pass
+
+
+def presigned_get_url(key:str, expires_seconds:int=1800)->str:
+    if not key: raise MediaStorageError('Chave de mídia vazia.')
+    try:
+        return _client().generate_presigned_url('get_object',Params={'Bucket':settings.r2_bucket_name,'Key':key},ExpiresIn=max(60,min(int(expires_seconds),3600)))
+    except Exception as exc:
+        raise MediaStorageError(f'Falha ao assinar URL de mídia: {exc}') from exc

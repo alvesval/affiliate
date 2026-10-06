@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     video_provider: str = "fal"
     fal_key: str = ""
     fal_video_model: str = "fal-ai/kling-video/v3/standard/text-to-video"
+    fal_image_video_model: str = "fal-ai/kling-video/v3/standard/image-to-video"
     # Comma-separated extra browser origins, e.g. https://app.example.com
     cors_origins: str = ""
     stripe_secret_key: str = ""
