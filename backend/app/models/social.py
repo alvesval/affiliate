@@ -89,6 +89,9 @@ class Publication(Base):
     tiktok_fail_reason: Mapped[str]=mapped_column(Text, default='')
     uploaded_bytes: Mapped[int]=mapped_column(Integer, default=0)
     public_post_ids: Mapped[str]=mapped_column(Text, default='')
+    pinterest_board_id: Mapped[str]=mapped_column(String(180), default='')
+    pinterest_board_name: Mapped[str]=mapped_column(String(300), default='')
+    pinterest_cover_url: Mapped[str]=mapped_column(String(2000), default='')
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class ProductVisualReference(Base):

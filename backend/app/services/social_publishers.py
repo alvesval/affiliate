@@ -99,4 +99,58 @@ async def fetch_tiktok_status(conn:SocialConnection,publish_id:str)->dict:
 async def publish(platform:str, conn:SocialConnection|None, variant:ContentVariant, publication:Publication)->dict:
     if not conn:raise PublishError(f'Conecte sua conta {platform} em Integrações antes de publicar.')
     if platform=='TikTok':return await publish_tiktok(conn,variant,publication)
+    if platform=='Pinterest':return await publish_pinterest(conn,variant,publication)
     raise PublishError(f'{platform}: provider preparado, mas publicação real será habilitada após OAuth/permissões da plataforma.')
+
+PINTEREST_API='https://api.pinterest.com/v5'
+
+async def pinterest_boards(conn:SocialConnection)->list[dict]:
+    token=decrypt(conn.access_token_enc)
+    headers={'Authorization':f'Bearer {token}','Accept':'application/json'}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r=await client.get(f'{PINTEREST_API}/boards',headers=headers,params={'page_size':100})
+    try:data=r.json()
+    except Exception: raise PublishError(f'Pinterest boards retornou HTTP {r.status_code}.')
+    if r.status_code>=400: raise PublishError(f'Pinterest recusou a consulta de boards: {data}')
+    return data.get('items') or []
+
+async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publication:Publication)->dict:
+    if not variant.media_storage_key: raise PublishError('Pinterest exige um vídeo antes de publicar.')
+    board_id=getattr(publication,'pinterest_board_id','') or ''
+    cover_url=getattr(publication,'pinterest_cover_url','') or ''
+    if not board_id: raise PublishError('Selecione um board do Pinterest antes de publicar.')
+    if not cover_url: raise PublishError('Pinterest exige uma capa válida para o Video Pin.')
+    token=decrypt(conn.access_token_enc)
+    headers={'Authorization':f'Bearer {token}','Content-Type':'application/json','Accept':'application/json'}
+    video=get_bytes(variant.media_storage_key)
+    async with httpx.AsyncClient(timeout=180,follow_redirects=True) as client:
+        reg=await client.post(f'{PINTEREST_API}/media',headers=headers,json={'media_type':'video'})
+        try:reg_data=reg.json()
+        except Exception: raise PublishError(f'Pinterest registro de mídia retornou HTTP {reg.status_code}.')
+        if reg.status_code>=400: raise PublishError(f'Pinterest recusou o registro do vídeo: {reg_data}')
+        media_id=reg_data.get('media_id'); upload_url=reg_data.get('upload_url'); params=reg_data.get('upload_parameters') or {}
+        if not media_id or not upload_url: raise PublishError('Pinterest não retornou media_id/upload_url.')
+        files={'file':(variant.media_filename or 'video.mp4',video,variant.media_content_type or 'video/mp4')}
+        up=await client.post(upload_url,data={str(k):str(v) for k,v in params.items()},files=files,headers={'Accept':'*/*'})
+        if up.status_code not in (200,201,204): raise PublishError(f'Falha no upload do vídeo ao Pinterest: HTTP {up.status_code} {up.text[:500]}')
+        # Processamento assíncrono do media_id. Poll curto e limitado; nunca cria Pin antes de succeeded.
+        import asyncio
+        media_status={}
+        for _ in range(30):
+            chk=await client.get(f'{PINTEREST_API}/media/{media_id}',headers={'Authorization':f'Bearer {token}','Accept':'application/json'})
+            try:media_status=chk.json()
+            except Exception: media_status={}
+            status=str(media_status.get('status') or '').lower()
+            if status=='succeeded': break
+            if status in ('failed','error'): raise PublishError(f'Pinterest falhou ao processar o vídeo: {media_status}')
+            await asyncio.sleep(2)
+        else: raise PublishError('Pinterest ainda está processando o vídeo. Tente executar novamente em alguns instantes.')
+        payload={'title':(variant.title or '')[:100],'description':(variant.caption or '')[:500],
+                 'board_id':board_id,'link':variant.affiliate_url or '',
+                 'media_source':{'source_type':'video_id','cover_image_url':cover_url,'media_id':media_id}}
+        pin=await client.post(f'{PINTEREST_API}/pins',headers=headers,json=payload)
+        try:pin_data=pin.json()
+        except Exception: raise PublishError(f'Pinterest Create Pin retornou HTTP {pin.status_code}.')
+        if pin.status_code>=400: raise PublishError(f'Pinterest recusou o Video Pin: {pin_data}')
+    pin_id=str(pin_data.get('id') or '')
+    return {'external_post_id':pin_id,'external_post_url':f'https://www.pinterest.com/pin/{pin_id}/' if pin_id else '', 'status':'published'}

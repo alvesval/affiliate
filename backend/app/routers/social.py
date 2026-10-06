@@ -15,8 +15,8 @@ from app.models.saas import GrowthEvent
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication, ProductVisualReference
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
-from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status
-from app.services.media_storage import build_key, put_bytes, get_bytes, delete as delete_media, MediaStorageError
+from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status, pinterest_boards
+from app.services.media_storage import build_key, put_bytes, get_bytes, delete as delete_media, MediaStorageError, presigned_get_url
 
 router=APIRouter(prefix='/api/v1/social',tags=['social'])
 PLATFORMS=['Instagram','TikTok','YouTube Shorts','Pinterest']
@@ -35,6 +35,8 @@ class ScheduleRequest(BaseModel):
     tiktok_brand_content:bool=False
     tiktok_brand_organic:bool=False
     tiktok_is_aigc:bool=False
+    pinterest_board_id:str=''
+    pinterest_board_name:str=''
 class AffiliateLinkRequest(BaseModel):
     affiliate_url:str
     affiliate_label:str=''
@@ -63,7 +65,7 @@ def _variant_json(v:ContentVariant):
 
 def _publication_json(x:Publication):
     return {'id':x.id,'variant_id':x.variant_id,'platform':x.platform,'status':x.status,'scheduled_at':x.scheduled_at.isoformat() if x.scheduled_at else None,
-      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids}
+      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids,'pinterest_board_id':x.pinterest_board_id,'pinterest_board_name':x.pinterest_board_name}
 
 @router.get('/products')
 def products(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -189,11 +191,21 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
         except PublishError as e:raise HTTPException(502,str(e))
         if data.tiktok_privacy_level not in (info.get('privacy_level_options') or []):raise HTTPException(422,'Privacidade não disponível para esta conta TikTok.')
         if data.tiktok_brand_content and data.tiktok_privacy_level=='SELF_ONLY':raise HTTPException(422,'TikTok não permite Branded Content com visibilidade Somente eu. Use uma opção de privacidade compatível quando o app estiver auditado.')
+    if any(v.platform=='Pinterest' for v in vs) and not data.pinterest_board_id.strip():
+        raise HTTPException(422,'Selecione o board do Pinterest antes de publicar.')
     created=[]
     for v in vs:
         if v.platform=='TikTok' and not v.media_storage_key:raise HTTPException(422,'Adicione um vídeo à variação TikTok antes de colocar na fila.')
         pub=Publication(company_id=p.company_id,campaign_id=c.id,variant_id=v.id,platform=v.platform,status='scheduled' if data.scheduled_at else 'queued',scheduled_at=data.scheduled_at,
-          privacy_level=data.tiktok_privacy_level,disable_comment=data.tiktok_disable_comment,disable_duet=data.tiktok_disable_duet,disable_stitch=data.tiktok_disable_stitch,user_consent=data.tiktok_user_consent,brand_content_toggle=data.tiktok_brand_content,brand_organic_toggle=data.tiktok_brand_organic,is_aigc=data.tiktok_is_aigc)
+          privacy_level=data.tiktok_privacy_level,disable_comment=data.tiktok_disable_comment,disable_duet=data.tiktok_disable_duet,disable_stitch=data.tiktok_disable_stitch,user_consent=data.tiktok_user_consent,brand_content_toggle=data.tiktok_brand_content,brand_organic_toggle=data.tiktok_brand_organic,is_aigc=data.tiktok_is_aigc,pinterest_board_id=data.pinterest_board_id.strip() if v.platform=='Pinterest' else '',pinterest_board_name=data.pinterest_board_name.strip() if v.platform=='Pinterest' else '')
+        if v.platform=='Pinterest':
+            ref=db.scalar(select(ProductVisualReference).where(ProductVisualReference.company_id==p.company_id,ProductVisualReference.campaign_id==c.id).order_by(ProductVisualReference.is_primary.desc(),ProductVisualReference.position.asc()))
+            if ref and ref.storage_key:
+                try: pub.pinterest_cover_url=presigned_get_url(ref.storage_key,3600)
+                except MediaStorageError: pub.pinterest_cover_url=''
+            if not pub.pinterest_cover_url:
+                product=db.get(Product,c.product_id);pub.pinterest_cover_url=(product.image_url if product else '') or ''
+            if not pub.pinterest_cover_url: raise HTTPException(422,'Pinterest exige uma imagem de capa/referência real do produto.')
         db.add(pub);db.flush();created.append(pub.id)
     c.status='scheduled' if data.scheduled_at else 'queued';db.commit();return {'campaign_id':c.id,'publication_ids':created,'status':c.status}
 
@@ -201,6 +213,7 @@ async def _execute(pub:Publication,db:Session):
     v=db.get(ContentVariant,pub.variant_id);conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==pub.company_id,SocialConnection.platform==pub.platform));pub.status='publishing';pub.error_message='';db.commit()
     try:
         result=await publish(pub.platform,conn,v,pub);pub.status=result.get('status','processing');pub.external_post_id=result.get('external_post_id','');pub.external_post_url=result.get('external_post_url','')
+        if pub.status=='published': pub.published_at=datetime.utcnow()
     except Exception as e:
         pub.status='error';pub.error_message=str(e)[:4000];pub.retry_count+=1
     db.commit()
@@ -261,6 +274,40 @@ async def tiktok_callback(code:str=Query(''),state:str=Query(''),error:str=Query
     conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='TikTok')) or SocialConnection(company_id=attempt.company_id,platform='TikTok')
     conn.external_user_id=data.get('open_id','');conn.account_name='TikTok';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',86400)));conn.connected_at=datetime.utcnow()
     db.add(conn);db.delete(attempt);db.commit();return RedirectResponse(settings.frontend_url+'/integracoes?social_connected=tiktok',status_code=303)
+
+@router.post('/pinterest/authorize')
+def pinterest_authorize(p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)):
+    if not(settings.pinterest_client_id and settings.pinterest_client_secret and settings.pinterest_redirect_uri):
+        raise HTTPException(409,'Configure PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET e PINTEREST_REDIRECT_URI')
+    state=secrets.token_urlsafe(32);db.add(SocialOAuthAttempt(company_id=p.company_id,platform='Pinterest',state=state));db.commit()
+    params={'client_id':settings.pinterest_client_id,'redirect_uri':settings.pinterest_redirect_uri,'response_type':'code','scope':'boards:read,pins:read,pins:write','state':state}
+    return {'authorization_url':'https://www.pinterest.com/oauth/?'+urlencode(params)}
+
+@router.get('/pinterest/callback')
+async def pinterest_callback(code:str=Query(''),state:str=Query(''),error:str=Query(''),db:Session=Depends(get_db)):
+    if error:return RedirectResponse(settings.frontend_url+'/integracoes?social_error='+error,status_code=303)
+    attempt=db.scalar(select(SocialOAuthAttempt).where(SocialOAuthAttempt.platform=='Pinterest',SocialOAuthAttempt.state==state))
+    if not attempt or not code:raise HTTPException(400,'Callback Pinterest inválido ou state expirado')
+    if datetime.utcnow()-attempt.created_at>timedelta(minutes=15):raise HTTPException(400,'State Pinterest expirado')
+    import base64
+    basic=base64.b64encode(f'{settings.pinterest_client_id}:{settings.pinterest_client_secret}'.encode()).decode()
+    form={'grant_type':'authorization_code','code':code,'redirect_uri':settings.pinterest_redirect_uri}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r=await client.post('https://api.pinterest.com/v5/oauth/token',data=form,headers={'Authorization':f'Basic {basic}','Content-Type':'application/x-www-form-urlencoded'})
+    try:data=r.json()
+    except Exception:raise HTTPException(502,f'Pinterest OAuth retornou HTTP {r.status_code}')
+    if r.status_code>=400 or not data.get('access_token'):raise HTTPException(502,f'Falha ao conectar Pinterest: {data}')
+    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='Pinterest')) or SocialConnection(company_id=attempt.company_id,platform='Pinterest')
+    conn.account_name='Pinterest';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','boards:read,pins:read,pins:write');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',2592000)));conn.connected_at=datetime.utcnow()
+    db.add(conn);db.delete(attempt);db.commit();return RedirectResponse(settings.frontend_url+'/integracoes?social_connected=pinterest',status_code=303)
+
+@router.get('/pinterest/boards')
+async def list_pinterest_boards(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==p.company_id,SocialConnection.platform=='Pinterest'))
+    if not conn:raise HTTPException(409,'Conecte o Pinterest em Integrações.')
+    try:items=await pinterest_boards(conn)
+    except PublishError as e:raise HTTPException(502,str(e))
+    return [{'id':str(x.get('id') or ''),'name':x.get('name') or '', 'privacy':x.get('privacy') or ''} for x in items]
 
 @router.delete('/connections/{platform}')
 def disconnect(platform:str,p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)):

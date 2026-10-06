@@ -95,3 +95,12 @@ def upgrade_v113(engine):
         "stripe_price_id":"VARCHAR(180) NOT NULL DEFAULT ''",
         "stripe_product_id":"VARCHAR(180) NOT NULL DEFAULT ''",
     })
+
+def upgrade_v115(engine):
+    """Pinterest publication metadata for the v1.15 release candidate."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        if engine.dialect.name=='postgresql':
+            conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_board_id VARCHAR(180) NOT NULL DEFAULT ''"))
+            conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_board_name VARCHAR(300) NOT NULL DEFAULT ''"))
+            conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_cover_url VARCHAR(2000) NOT NULL DEFAULT ''"))
