@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     pinterest_client_secret: str = ""
     pinterest_redirect_uri: str = ""
     # pending_trial | trial | standard. Used only for UX/status; credentials still control OAuth.
-    pinterest_access_status: str = "pending_trial"
+    pinterest_access_status: str = "trial"
     meta_app_id: str = ""
     meta_app_secret: str = ""
     meta_redirect_uri: str = ""
