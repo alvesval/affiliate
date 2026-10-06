@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampa
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
 from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status
-from app.services.media_storage import build_key, put_bytes, delete as delete_media, MediaStorageError
+from app.services.media_storage import build_key, put_bytes, get_bytes, delete as delete_media, MediaStorageError
 
 router=APIRouter(prefix='/api/v1/social',tags=['social'])
 PLATFORMS=['Instagram','TikTok','YouTube Shorts','Pinterest']
@@ -130,6 +130,16 @@ async def upload_media(variant_id:int,file:UploadFile=File(...),duration_seconds
     campaign=db.scalar(select(ContentCampaign).where(ContentCampaign.id==v.campaign_id,ContentCampaign.company_id==p.company_id))
     if campaign and duration_seconds>0: campaign.duration_seconds=duration_seconds
     db.commit();delete_media(old);return _variant_json(v)
+
+@router.get('/variants/{variant_id}/media/content')
+def media_content(variant_id:int,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    v=db.scalar(select(ContentVariant).where(ContentVariant.id==variant_id,ContentVariant.company_id==p.company_id))
+    if not v:raise HTTPException(404,'Variação não encontrada')
+    if not v.media_storage_key:raise HTTPException(404,'Vídeo não encontrado')
+    try:data=get_bytes(v.media_storage_key)
+    except MediaStorageError as exc:raise HTTPException(502,str(exc))
+    headers={'Content-Disposition':f'inline; filename="{(v.media_filename or "video.mp4").replace(chr(34), "")}"','Cache-Control':'private, max-age=300'}
+    return Response(content=data,media_type=v.media_content_type or 'video/mp4',headers=headers)
 
 @router.delete('/variants/{variant_id}/media')
 def remove_media(variant_id:int,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
