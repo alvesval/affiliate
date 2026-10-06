@@ -15,7 +15,11 @@ router=APIRouter(prefix='/api/v1/ai-studio',tags=['AI Content Studio'])
 class GenerateIn(BaseModel):variant_id:int
 class VideoIn(BaseModel):
     variant_id:int;seconds:int=Field(default=8,ge=4,le=12);prompt:str=Field(default='',max_length=5000)
-class StatusIn(BaseModel):variant_id:int;video_id:str=Field(min_length=3,max_length=300)
+class StatusIn(BaseModel):
+    variant_id:int
+    video_id:str=Field(min_length=3,max_length=300)
+    status_url:str=Field(default='',max_length=2000)
+    response_url:str=Field(default='',max_length=2000)
 def ctx(db,cid,vid):
     v=db.scalar(select(ContentVariant).where(ContentVariant.id==vid,ContentVariant.company_id==cid))
     if not v:raise HTTPException(404,'Variação não encontrada')
@@ -53,16 +57,16 @@ async def video_start(x:VideoIn,p:Principal=Depends(require_role('EDITOR')),db:S
         db.add(usage)
     # Não consome franquia ao apenas enfileirar. A cobrança ocorre somente após conclusão/anexo.
     db.commit()
-    return {'variant_id':v.id,'video_id':d.get('id'),'status':d.get('status'),'progress':d.get('progress',0),'seconds':d.get('seconds'),'provider':d.get('provider'),'model':d.get('model'),'usage':{'used':used,'limit':limit}}
+    return {'variant_id':v.id,'video_id':d.get('id'),'status':d.get('status'),'progress':d.get('progress',0),'seconds':d.get('seconds'),'provider':d.get('provider'),'model':d.get('model'),'status_url':d.get('status_url'),'response_url':d.get('response_url'),'usage':{'used':used,'limit':limit}}
 @router.post('/video/status')
 async def poll(x:StatusIn,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
-    v,c,pr=ctx(db,p.company_id,x.variant_id);d=await video_status(x.video_id);status=d.get('status','')
+    v,c,pr=ctx(db,p.company_id,x.variant_id);d=await video_status(x.video_id,x.status_url or None);status=d.get('status','')
     if status=='completed':
         # Evita cobrar novamente caso o frontend repita o polling após o mesmo job já ter sido anexado.
         job_marker=f'ai-video-{x.video_id}.mp4'
         already_attached=(v.media_filename==job_marker)
         if not already_attached:
-            raw=await download_video(x.video_id);old=v.media_storage_key;key=build_key(v.id,job_marker);put_bytes(key,raw,'video/mp4');v.media_storage_key=key;v.media_filename=job_marker;v.media_content_type='video/mp4';v.media_size=len(raw);v.media_duration_seconds=int(d.get('seconds') or 0);v.media_url=''
+            raw=await download_video(x.video_id,x.response_url or None);old=v.media_storage_key;key=build_key(v.id,job_marker);put_bytes(key,raw,'video/mp4');v.media_storage_key=key;v.media_filename=job_marker;v.media_content_type='video/mp4';v.media_size=len(raw);v.media_duration_seconds=int(d.get('seconds') or 0);v.media_url=''
             period=datetime.utcnow().strftime('%Y-%m');usage=db.scalar(select(UsageCounter).where(UsageCounter.company_id==p.company_id,UsageCounter.period_key==period))
             if not usage: usage=UsageCounter(company_id=p.company_id,period_key=period);db.add(usage)
             usage.ai_video_generations=int(getattr(usage,'ai_video_generations',0) or 0)+1

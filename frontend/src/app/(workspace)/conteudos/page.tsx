@@ -29,8 +29,10 @@ export default function Content(){
    const started=await aiReq("/video/start","POST",{variant_id:v.id,seconds,prompt:""});
    if(!started.video_id)throw Error("O provedor não retornou o identificador do vídeo.");
    const videoId=String(started.video_id);
+   const statusUrl=String(started.status_url||"");
+   const responseUrl=String(started.response_url||"");
    for(let attempt=0;attempt<120;attempt++){
-    const d=await aiReq("/video/status","POST",{variant_id:v.id,video_id:videoId});
+    const d=await aiReq("/video/status","POST",{variant_id:v.id,video_id:videoId,status_url:statusUrl,response_url:responseUrl});
     const status=String(d.status||"processing");const progress=Math.max(0,Math.min(100,Number(d.progress||0)));
     setVideoJobs(x=>({...x,[v.id]:{busy:status!=="completed"&&status!=="failed"&&status!=="error",status,progress,error:d.error||undefined}}));
     if(status==="completed"){if(active)await detail(active.id);setMessage("Vídeo criado com IA e vinculado à campanha.");return}

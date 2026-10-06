@@ -30,9 +30,9 @@ async def generate_copy(product,platform,duration,tone,audience):
 async def start_video(prompt,seconds=8):
     from app.services.video_provider import get_video_provider
     return await get_video_provider().start(prompt,seconds)
-async def video_status(video_id):
+async def video_status(video_id,status_url=None):
     from app.services.video_provider import get_video_provider
-    return await get_video_provider().status(video_id)
-async def download_video(video_id):
+    return await get_video_provider().status(video_id,status_url)
+async def download_video(video_id,response_url=None):
     from app.services.video_provider import get_video_provider
-    return await get_video_provider().download(video_id)
+    return await get_video_provider().download(video_id,response_url)
