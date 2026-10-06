@@ -1,4 +1,4 @@
-import json,re,secrets,hashlib
+import json,re,secrets,hashlib,logging
 from datetime import datetime,timedelta
 from fastapi import APIRouter,Depends,HTTPException
 from pydantic import BaseModel,EmailStr,Field
@@ -12,6 +12,8 @@ from app.core.auth import (
     create_token, current_principal, require_role, Principal
 )
 from app.models.saas import Company,SaaSUser,CompanyMember,Plan,Subscription,AuditEvent,ContentAutomationProfile,GrowthEvent,UsageCounter,ContentAutomationRun,PasswordResetToken
+
+logger=logging.getLogger(__name__)
 
 router=APIRouter(prefix='/api/v1/saas',tags=['saas'])
 class Register(BaseModel): name:str=Field(min_length=2,max_length=140);email:EmailStr;password:str=Field(min_length=8,max_length=128);company_name:str=Field(min_length=2,max_length=180);plan_code:str='ENTRY'
@@ -105,12 +107,16 @@ def forgot_password(x:ForgotPassword,db:Session=Depends(get_db)):
     db.commit()
     reset_url=f"{settings.frontend_url.rstrip('/')}/redefinir-senha?token={raw}"
     try:
-        send_password_reset_email(u.email,reset_url)
-    except EmailDeliveryError:
-        # Do not expose provider/configuration details to the public endpoint.
-        # Invalidate the token because no usable e-mail was delivered.
+        resend_id=send_password_reset_email(u.email,reset_url)
+        logger.info('[PASSWORD_RESET] E-mail de recuperação enviado; user_id=%s; resend_id=%s', u.id, resend_id or 'n/d')
+    except EmailDeliveryError as exc:
+        # Never expose provider/configuration details to the public endpoint.
+        # Log the internal reason and invalidate the token because no usable e-mail was delivered.
+        logger.error('[PASSWORD_RESET] Falha no envio; user_id=%s; motivo=%s', u.id, exc)
         token=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
-        if token: token.used_at=datetime.utcnow(); db.commit()
+        if token:
+            token.used_at=datetime.utcnow()
+            db.commit()
     return public
 
 @router.post('/auth/reset-password')
