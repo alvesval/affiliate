@@ -69,11 +69,21 @@ def upgrade_tenant_stage2(engine):
     for table in ('products','product_prices','product_scores','meli_oauth_attempts','meli_oauth_tokens'):
         _add_columns(engine, table, {'company_id':'INTEGER NULL'})
     if engine.dialect.name == 'postgresql':
+        # Older releases created platform as globally unique (sometimes as a
+        # UNIQUE constraint, sometimes as a UNIQUE index named
+        # ix_social_connections_platform). That breaks reconnect and SaaS
+        # multi-tenancy. Remove only single-column uniqueness on platform;
+        # upgrade_tenant_constraints() creates the correct company/platform key.
+        inspector = inspect(engine)
         with engine.begin() as conn:
             rows=conn.execute(text("""SELECT tc.constraint_name FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name=ccu.constraint_name AND tc.table_schema=ccu.table_schema WHERE tc.table_schema=current_schema() AND tc.table_name='social_connections' AND tc.constraint_type='UNIQUE' AND ccu.column_name='platform'""")).fetchall()
             for (name,) in rows:
                 safe=''.join(ch for ch in name if ch.isalnum() or ch=='_')
                 conn.execute(text(f'ALTER TABLE social_connections DROP CONSTRAINT IF EXISTS {safe}'))
+            for idx in inspector.get_indexes('social_connections'):
+                if idx.get('unique') and idx.get('column_names') == ['platform']:
+                    safe=''.join(ch for ch in idx['name'] if ch.isalnum() or ch=='_')
+                    conn.execute(text(f'DROP INDEX IF EXISTS {safe}'))
 
 def upgrade_tenant_constraints(engine):
     if engine.dialect.name != 'postgresql': return

@@ -316,7 +316,15 @@ async def tiktok_callback(code:str=Query(''),state:str=Query(''),error:str=Query
     async with httpx.AsyncClient(timeout=30) as client:r=await client.post('https://open.tiktokapis.com/v2/oauth/token/',data=form,headers={'Content-Type':'application/x-www-form-urlencoded'})
     data=r.json()
     if r.status_code>=400 or not data.get('access_token'):raise HTTPException(502,f'Falha ao conectar TikTok: {data}')
-    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='TikTok')) or SocialConnection(company_id=attempt.company_id,platform='TikTok')
+    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='TikTok'))
+    if not conn:
+        # Upgrade path for connections created before company_id existed. Adopt
+        # the legacy row instead of inserting a duplicate platform record.
+        conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id.is_(None),SocialConnection.platform=='TikTok').order_by(SocialConnection.id.asc()))
+        if conn:
+            conn.company_id=attempt.company_id
+        else:
+            conn=SocialConnection(company_id=attempt.company_id,platform='TikTok')
     conn.external_user_id=data.get('open_id','');conn.account_name='TikTok';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',86400)));conn.connected_at=datetime.utcnow()
     db.add(conn);db.delete(attempt);db.commit();return RedirectResponse(settings.frontend_url+'/integracoes?social_connected=tiktok',status_code=303)
 
