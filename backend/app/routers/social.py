@@ -46,16 +46,32 @@ class MediaRequest(BaseModel): media_url:str
 
 def _variant(p:Product, platform:str, duration:int, tone:str, audience:str):
     target=f' para {audience}' if audience.strip() else ''
-    hooks={'TikTok':f'Vale a pena conhecer {p.title[:70]}?','Instagram':f'Olha este achado: {p.title[:75]}','YouTube Shorts':f'{p.title[:70]} em {duration} segundos','Pinterest':f'Ideia para salvar: {p.title[:75]}'}
-    hook=hooks.get(platform,f'Conheça {p.title[:80]}')
-    if platform=='TikTok':
+
+    if platform=='Pinterest':
+        # Pinterest já exibe o título e o botão de destino separadamente. A descrição
+        # não deve repetir o nome inteiro do produto nem expor a URL crua.
+        hook='Um achado para conhecer antes da próxima compra.'
+        cta='Veja os detalhes, especificações, preço e disponibilidade atualizados em “Acessar o site”.'
+        tags='#achadinhos #comprasonline #ofertas #publicidade'
+        caption=(
+            f'{hook}\n\n'
+            f'{cta} Compare as informações do anúncio e confirme se o produto atende ao que você procura.\n\n'
+            f'{tags}\n\n'
+            'Publicidade • Posso receber comissão por compras qualificadas, sem custo adicional para você.'
+        )
+    elif platform=='TikTok':
+        hook=f'Vale a pena conhecer {p.title[:70]}?'
         cta='Confira o produto pelo link indicado no perfil.'
-        link_line=''
+        tags='#achadinhos #ofertas #comprasonline #publicidade'
+        caption=f'{hook}\n\n{cta}\n\n{tags}\n\nPublicidade • Posso receber comissão por compras qualificadas.'
     else:
+        hooks={'Instagram':f'Olha este achado: {p.title[:75]}','YouTube Shorts':f'{p.title[:70]} em {duration} segundos'}
+        hook=hooks.get(platform,f'Conheça {p.title[:80]}')
         cta='Confira preço, disponibilidade e condições atualizadas no link de afiliado.'
         link_line=f'\n{p.affiliate_url}' if p.affiliate_url else ''
-    tags='#achadinhos #ofertas #comprasonline #publicidade'
-    caption=f'{hook}\n\n{p.title}\n{cta}{link_line}\n\n{tags}\n\nPublicidade • Posso receber comissão por compras qualificadas.'
+        tags='#achadinhos #ofertas #comprasonline #publicidade'
+        caption=f'{hook}\n\n{cta}{link_line}\n\n{tags}\n\nPublicidade • Posso receber comissão por compras qualificadas.'
+
     script=(f'0–3s — GANCHO: {hook}\n3–{max(7,duration-8)}s — Mostre o produto e somente características verificadas no anúncio oficial{target}. '
             f'Não prometa resultados não comprovados.\n{max(8,duration-7)}–{duration}s — CTA: {cta}\nTom: {tone}. Inclua identificação de publicidade.')
     return hook,caption,script,tags,cta
@@ -115,6 +131,19 @@ def approve(campaign_id:int,data:ApprovalRequest,p:Principal=Depends(require_rol
     c.status='approved' if data.approved else 'draft'
     for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all():v.status=c.status
     db.commit();return {'id':c.id,'status':c.status}
+
+@router.post('/variants/{variant_id}/refresh-copy')
+def refresh_variant_copy(variant_id:int,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    v=db.scalar(select(ContentVariant).where(ContentVariant.id==variant_id,ContentVariant.company_id==p.company_id))
+    if not v: raise HTTPException(404,'Variação não encontrada')
+    c=db.scalar(select(ContentCampaign).where(ContentCampaign.id==v.campaign_id,ContentCampaign.company_id==p.company_id))
+    if not c: raise HTTPException(404,'Campanha não encontrada')
+    product=db.scalar(select(Product).where(Product.id==c.product_id,Product.company_id==p.company_id))
+    if not product: raise HTTPException(404,'Produto não encontrado')
+    hook,caption,script,tags,cta=_variant(product,v.platform,c.duration_seconds,c.tone,c.audience)
+    v.hook=hook;v.caption=caption;v.script=script;v.hashtags=tags;v.cta=cta
+    db.commit();db.refresh(v)
+    return _variant_json(v)
 
 @router.post('/variants/{variant_id}/media')
 def set_media_url(variant_id:int,data:MediaRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
