@@ -28,6 +28,7 @@ class CampaignRequest(BaseModel):
 class ApprovalRequest(BaseModel): approved:bool=True
 class ScheduleRequest(BaseModel):
     scheduled_at:datetime|None=None
+    tiktok_publish_mode:str='direct'
     tiktok_privacy_level:str='SELF_ONLY'
     tiktok_disable_comment:bool=False
     tiktok_disable_duet:bool=False
@@ -82,7 +83,7 @@ def _variant_json(v:ContentVariant):
 
 def _publication_json(x:Publication):
     return {'id':x.id,'variant_id':x.variant_id,'platform':x.platform,'status':x.status,'scheduled_at':x.scheduled_at.isoformat() if x.scheduled_at else None,
-      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids,'pinterest_board_id':x.pinterest_board_id,'pinterest_board_name':x.pinterest_board_name}
+      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_publish_mode':x.tiktok_publish_mode,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids,'pinterest_board_id':x.pinterest_board_id,'pinterest_board_name':x.pinterest_board_name}
 
 @router.get('/products')
 def products(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -216,13 +217,14 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
     not_configured=[v.platform for v in vs if not v.affiliate_configured_at]
     if not_configured: raise HTTPException(409,f"Salve a configuração de link antes de publicar: {', '.join(not_configured)}")
     if any(v.platform=='TikTok' for v in vs):
+        if data.tiktok_publish_mode not in ('direct','draft'): raise HTTPException(422,'Modo TikTok inválido.')
         if not data.tiktok_user_consent:raise HTTPException(422,'Confirme o consentimento antes de enviar ao TikTok.')
         conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==p.company_id,SocialConnection.platform=='TikTok'))
         if not conn:raise HTTPException(409,'Conecte o TikTok em Integrações.')
         try:info=await tiktok_creator_info(conn)
         except PublishError as e:raise HTTPException(502,str(e))
-        if data.tiktok_privacy_level not in (info.get('privacy_level_options') or []):raise HTTPException(422,'Privacidade não disponível para esta conta TikTok.')
-        if data.tiktok_brand_content and data.tiktok_privacy_level=='SELF_ONLY':raise HTTPException(422,'TikTok não permite Branded Content com visibilidade Somente eu. Use uma opção de privacidade compatível quando o app estiver auditado.')
+        if data.tiktok_publish_mode=='direct' and data.tiktok_privacy_level not in (info.get('privacy_level_options') or []):raise HTTPException(422,'Privacidade não disponível para esta conta TikTok.')
+        if data.tiktok_publish_mode=='direct' and data.tiktok_brand_content and data.tiktok_privacy_level=='SELF_ONLY':raise HTTPException(422,'TikTok não permite Branded Content com visibilidade Somente eu. Use uma opção de privacidade compatível quando o app estiver auditado.')
     if any(v.platform=='Pinterest' for v in vs) and not data.pinterest_board_id.strip():
         raise HTTPException(422,'Selecione o board do Pinterest antes de publicar.')
     usage,_,_=enforce_monthly_limit(db,p.company_id,'publications_month','publications_created',len(vs))
@@ -230,7 +232,7 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
     for v in vs:
         if v.platform=='TikTok' and not v.media_storage_key:raise HTTPException(422,'Adicione um vídeo à variação TikTok antes de colocar na fila.')
         pub=Publication(company_id=p.company_id,campaign_id=c.id,variant_id=v.id,platform=v.platform,status='scheduled' if data.scheduled_at else 'queued',scheduled_at=data.scheduled_at,
-          privacy_level=data.tiktok_privacy_level,disable_comment=data.tiktok_disable_comment,disable_duet=data.tiktok_disable_duet,disable_stitch=data.tiktok_disable_stitch,user_consent=data.tiktok_user_consent,brand_content_toggle=data.tiktok_brand_content,brand_organic_toggle=data.tiktok_brand_organic,is_aigc=data.tiktok_is_aigc,pinterest_board_id=data.pinterest_board_id.strip() if v.platform=='Pinterest' else '',pinterest_board_name=data.pinterest_board_name.strip() if v.platform=='Pinterest' else '')
+          tiktok_publish_mode=data.tiktok_publish_mode if v.platform=='TikTok' else 'direct',privacy_level=data.tiktok_privacy_level,disable_comment=data.tiktok_disable_comment,disable_duet=data.tiktok_disable_duet,disable_stitch=data.tiktok_disable_stitch,user_consent=data.tiktok_user_consent,brand_content_toggle=data.tiktok_brand_content,brand_organic_toggle=data.tiktok_brand_organic,is_aigc=data.tiktok_is_aigc,pinterest_board_id=data.pinterest_board_id.strip() if v.platform=='Pinterest' else '',pinterest_board_name=data.pinterest_board_name.strip() if v.platform=='Pinterest' else '')
         if v.platform=='Pinterest':
             ref=db.scalar(select(ProductVisualReference).where(ProductVisualReference.company_id==p.company_id,ProductVisualReference.campaign_id==c.id).order_by(ProductVisualReference.is_primary.desc(),ProductVisualReference.position.asc()))
             if ref and ref.storage_key:
@@ -301,7 +303,7 @@ def connections(p:Principal=Depends(current_principal),db:Session=Depends(get_db
 def tiktok_authorize(p:Principal=Depends(require_role('ADMIN')),db:Session=Depends(get_db)):
     if not(settings.tiktok_client_key and settings.tiktok_client_secret and settings.tiktok_redirect_uri):raise HTTPException(409,'Configure TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET e TIKTOK_REDIRECT_URI')
     state=secrets.token_urlsafe(32);db.add(SocialOAuthAttempt(company_id=p.company_id,platform='TikTok',state=state));db.commit()
-    params={'client_key':settings.tiktok_client_key,'response_type':'code','scope':'user.info.basic,video.publish','redirect_uri':settings.tiktok_redirect_uri,'state':state}
+    params={'client_key':settings.tiktok_client_key,'response_type':'code','scope':'user.info.basic,video.publish,video.upload','redirect_uri':settings.tiktok_redirect_uri,'state':state}
     return {'authorization_url':'https://www.tiktok.com/v2/auth/authorize/?'+urlencode(params)}
 
 @router.get('/tiktok/callback')

@@ -47,9 +47,10 @@ async def publish_tiktok(conn:SocialConnection, variant:ContentVariant, publicat
         raise PublishError('TikTok exige um vídeo enviado pelo Estúdio antes de publicar.')
     if not publication.user_consent:
         raise PublishError('Confirmação do usuário é obrigatória antes do envio ao TikTok.')
+    mode=(getattr(publication,'tiktok_publish_mode','direct') or 'direct').lower()
     creator=await tiktok_creator_info(conn)
     options=creator.get('privacy_level_options') or []
-    if publication.privacy_level not in options:
+    if mode=='direct' and publication.privacy_level not in options:
         raise PublishError('A privacidade escolhida não está mais disponível. Reabra as opções de publicação do TikTok.')
     data=get_bytes(variant.media_storage_key)
     size=len(data)
@@ -60,21 +61,27 @@ async def publish_tiktok(conn:SocialConnection, variant:ContentVariant, publicat
     chunk_size,total_chunks=_chunk_plan(size)
     token=decrypt(conn.access_token_enc)
     headers={'Authorization':f'Bearer {token}','Content-Type':'application/json; charset=UTF-8'}
-    payload={
-      'post_info':{
-        'title':(variant.caption or variant.title)[:2200],
-        'privacy_level':publication.privacy_level,
-        'disable_duet':bool(publication.disable_duet or creator.get('duet_disabled')),
-        'disable_comment':bool(publication.disable_comment or creator.get('comment_disabled')),
-        'disable_stitch':bool(publication.disable_stitch or creator.get('stitch_disabled')),
-        'brand_content_toggle':bool(publication.brand_content_toggle),
-        'brand_organic_toggle':bool(publication.brand_organic_toggle),
-        'is_aigc':bool(publication.is_aigc),
-      },
-      'source_info':{'source':'FILE_UPLOAD','video_size':size,'chunk_size':chunk_size,'total_chunk_count':total_chunks}
-    }
+    source_info={'source':'FILE_UPLOAD','video_size':size,'chunk_size':chunk_size,'total_chunk_count':total_chunks}
+    if mode=='draft':
+        payload={'source_info':source_info}
+        init_url=f'{API}/v2/post/publish/inbox/video/init/'
+    else:
+        payload={
+          'post_info':{
+            'title':(variant.caption or variant.title)[:2200],
+            'privacy_level':publication.privacy_level,
+            'disable_duet':bool(publication.disable_duet or creator.get('duet_disabled')),
+            'disable_comment':bool(publication.disable_comment or creator.get('comment_disabled')),
+            'disable_stitch':bool(publication.disable_stitch or creator.get('stitch_disabled')),
+            'brand_content_toggle':bool(publication.brand_content_toggle),
+            'brand_organic_toggle':bool(publication.brand_organic_toggle),
+            'is_aigc':bool(publication.is_aigc),
+          },
+          'source_info':source_info
+        }
+        init_url=f'{API}/v2/post/publish/video/init/'
     async with httpx.AsyncClient(timeout=30,follow_redirects=True) as client:
-        r=await client.post(f'{API}/v2/post/publish/video/init/',headers=headers,json=payload)
+        r=await client.post(init_url,headers=headers,json=payload)
     try:resp=r.json()
     except Exception:raise PublishError(f'TikTok init retornou HTTP {r.status_code}.')
     if r.status_code>=400 or (resp.get('error') or {}).get('code') not in (None,'ok'):
@@ -83,7 +90,7 @@ async def publish_tiktok(conn:SocialConnection, variant:ContentVariant, publicat
     publish_id=out.get('publish_id','');upload_url=out.get('upload_url','')
     if not publish_id or not upload_url:raise PublishError('TikTok não retornou publish_id/upload_url.')
     await _upload_tiktok(upload_url,data,content_type,chunk_size)
-    return {'external_post_id':publish_id,'external_post_url':'','status':'processing','max_video_post_duration_sec':max_duration}
+    return {'external_post_id':publish_id,'external_post_url':'','status':'processing','max_video_post_duration_sec':max_duration,'tiktok_publish_mode':mode}
 
 async def fetch_tiktok_status(conn:SocialConnection,publish_id:str)->dict:
     token=decrypt(conn.access_token_enc)

@@ -104,3 +104,10 @@ def upgrade_v115(engine):
             conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_board_id VARCHAR(180) NOT NULL DEFAULT ''"))
             conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_board_name VARCHAR(300) NOT NULL DEFAULT ''"))
             conn.execute(text("ALTER TABLE publications ADD COLUMN IF NOT EXISTS pinterest_cover_url VARCHAR(2000) NOT NULL DEFAULT ''"))
+
+
+def upgrade_v116(engine):
+    """TikTok commercial release: persist Direct Post vs Draft mode."""
+    _add_columns(engine,"publications",{
+        "tiktok_publish_mode":"VARCHAR(20) NOT NULL DEFAULT 'direct'",
+    })

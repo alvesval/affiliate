@@ -85,6 +85,7 @@ class Publication(Base):
     brand_content_toggle: Mapped[bool]=mapped_column(Boolean, default=False)
     brand_organic_toggle: Mapped[bool]=mapped_column(Boolean, default=False)
     is_aigc: Mapped[bool]=mapped_column(Boolean, default=False)
+    tiktok_publish_mode: Mapped[str]=mapped_column(String(20), default='direct')
     tiktok_status: Mapped[str]=mapped_column(String(80), default='')
     tiktok_fail_reason: Mapped[str]=mapped_column(Text, default='')
     uploaded_bytes: Mapped[int]=mapped_column(Integer, default=0)
