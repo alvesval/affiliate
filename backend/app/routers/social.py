@@ -16,7 +16,7 @@ from app.services.plan_limits import enforce_monthly_limit, consume
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication, ProductVisualReference
 from app.core.auth import current_principal, require_role, Principal
 from app.services.social_crypto import encrypt
-from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status, pinterest_boards
+from app.services.social_publishers import publish, PublishError, tiktok_creator_info, fetch_tiktok_status, pinterest_boards, create_pinterest_board, pinterest_environment
 from app.services.media_storage import build_key, put_bytes, get_bytes, delete as delete_media, MediaStorageError, presigned_get_url
 
 router=APIRouter(prefix='/api/v1/social',tags=['social'])
@@ -215,7 +215,15 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
     c.status='scheduled' if data.scheduled_at else 'queued';db.commit();return {'campaign_id':c.id,'publication_ids':created,'status':c.status}
 
 async def _execute(pub:Publication,db:Session):
-    v=db.get(ContentVariant,pub.variant_id);conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==pub.company_id,SocialConnection.platform==pub.platform));pub.status='publishing';pub.error_message='';db.commit()
+    v=db.get(ContentVariant,pub.variant_id)
+    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==pub.company_id,SocialConnection.platform==pub.platform))
+    # URLs assinadas podem expirar entre o agendamento e a execução; renove a capa no momento do envio.
+    if pub.platform=='Pinterest':
+        ref=db.scalar(select(ProductVisualReference).where(ProductVisualReference.company_id==pub.company_id,ProductVisualReference.campaign_id==pub.campaign_id).order_by(ProductVisualReference.is_primary.desc(),ProductVisualReference.position.asc()))
+        if ref and ref.storage_key:
+            try: pub.pinterest_cover_url=presigned_get_url(ref.storage_key,3600)
+            except MediaStorageError: pass
+    pub.status='publishing';pub.error_message='';db.commit()
     try:
         result=await publish(pub.platform,conn,v,pub);pub.status=result.get('status','processing');pub.external_post_id=result.get('external_post_id','');pub.external_post_url=result.get('external_post_url','')
         if pub.status=='published': pub.published_at=datetime.utcnow()
@@ -299,13 +307,28 @@ async def pinterest_callback(code:str=Query(''),state:str=Query(''),error:str=Qu
     basic=base64.b64encode(f'{settings.pinterest_client_id}:{settings.pinterest_client_secret}'.encode()).decode()
     form={'grant_type':'authorization_code','code':code,'redirect_uri':settings.pinterest_redirect_uri}
     async with httpx.AsyncClient(timeout=30) as client:
-        r=await client.post('https://api.pinterest.com/v5/oauth/token',data=form,headers={'Authorization':f'Basic {basic}','Content-Type':'application/x-www-form-urlencoded'})
+        oauth_api='https://api.pinterest.com/v5' if (settings.pinterest_access_status or '').lower()=='standard' else 'https://api-sandbox.pinterest.com/v5'
+        r=await client.post(f'{oauth_api}/oauth/token',data=form,headers={'Authorization':f'Basic {basic}','Content-Type':'application/x-www-form-urlencoded'})
     try:data=r.json()
     except Exception:raise HTTPException(502,f'Pinterest OAuth retornou HTTP {r.status_code}')
     if r.status_code>=400 or not data.get('access_token'):raise HTTPException(502,f'Falha ao conectar Pinterest: {data}')
     conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='Pinterest')) or SocialConnection(company_id=attempt.company_id,platform='Pinterest')
     conn.account_name='Pinterest';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','boards:read,boards:write,pins:read,pins:write,user_accounts:read');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',2592000)));conn.connected_at=datetime.utcnow()
     db.add(conn);db.delete(attempt);db.commit();return RedirectResponse(settings.frontend_url+'/integracoes?social_connected=pinterest',status_code=303)
+
+@router.get('/pinterest/capabilities')
+def pinterest_capabilities(p:Principal=Depends(current_principal)):
+    env=pinterest_environment()
+    return {'environment':env,'access_status':settings.pinterest_access_status,'video_pin':env=='production','image_pin':True,'sandbox':env=='sandbox'}
+
+@router.post('/pinterest/boards/test')
+async def create_pinterest_test_board(p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    if pinterest_environment()!='sandbox': raise HTTPException(409,'A pasta de teste é exclusiva do Pinterest Sandbox.')
+    conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==p.company_id,SocialConnection.platform=='Pinterest'))
+    if not conn: raise HTTPException(409,'Conecte o Pinterest em Integrações.')
+    try: item=await create_pinterest_board(conn)
+    except PublishError as e: raise HTTPException(502,str(e))
+    return {'id':str(item.get('id') or ''),'name':item.get('name') or 'AIAffiliate Sandbox','privacy':item.get('privacy') or ''}
 
 @router.get('/pinterest/boards')
 async def list_pinterest_boards(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):

@@ -102,7 +102,15 @@ async def publish(platform:str, conn:SocialConnection|None, variant:ContentVaria
     if platform=='Pinterest':return await publish_pinterest(conn,variant,publication)
     raise PublishError(f'{platform}: provider preparado, mas publicação real será habilitada após OAuth/permissões da plataforma.')
 
-PINTEREST_API='https://api.pinterest.com/v5'
+PINTEREST_PROD_API='https://api.pinterest.com/v5'
+PINTEREST_SANDBOX_API='https://api-sandbox.pinterest.com/v5'
+
+def pinterest_environment()->str:
+    from app.core.config import settings
+    return 'production' if (settings.pinterest_access_status or '').lower()=='standard' else 'sandbox'
+
+def _pinterest_api()->str:
+    return PINTEREST_PROD_API if pinterest_environment()=='production' else PINTEREST_SANDBOX_API
 PINTEREST_PUBLISH_SCOPES={'boards:read','boards:write','pins:read','pins:write'}
 
 def _pinterest_scopes(conn:SocialConnection)->set[str]:
@@ -136,24 +144,52 @@ async def pinterest_boards(conn:SocialConnection)->list[dict]:
     token=decrypt(conn.access_token_enc)
     headers={'Authorization':f'Bearer {token}','Accept':'application/json'}
     async with httpx.AsyncClient(timeout=30) as client:
-        r=await client.get(f'{PINTEREST_API}/boards',headers=headers,params={'page_size':100})
+        r=await client.get(f'{_pinterest_api()}/boards',headers=headers,params={'page_size':100})
     try:data=r.json()
     except Exception: raise PublishError(f'Pinterest boards retornou HTTP {r.status_code}.')
     if r.status_code>=400: raise PublishError(f'Pinterest recusou a consulta de boards: {data}')
     return data.get('items') or []
 
+async def create_pinterest_board(conn:SocialConnection, name:str='AIAffiliate Sandbox')->dict:
+    token=decrypt(conn.access_token_enc)
+    headers={'Authorization':f'Bearer {token}','Content-Type':'application/json','Accept':'application/json'}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r=await client.post(f'{_pinterest_api()}/boards',headers=headers,json={'name':name[:180],'privacy':'PUBLIC'})
+    try:data=r.json()
+    except Exception: raise PublishError(f'Pinterest Create Board retornou HTTP {r.status_code}.')
+    if r.status_code>=400: raise _pinterest_api_error('Pinterest recusou a criação da pasta de teste',data)
+    return data
+
 async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publication:Publication)->dict:
     _ensure_pinterest_publish_scopes(conn)
-    if not variant.media_storage_key: raise PublishError('Pinterest exige um vídeo antes de publicar.')
     board_id=getattr(publication,'pinterest_board_id','') or ''
     cover_url=getattr(publication,'pinterest_cover_url','') or ''
     if not board_id: raise PublishError('Selecione um board do Pinterest antes de publicar.')
-    if not cover_url: raise PublishError('Pinterest exige uma capa válida para o Video Pin.')
+    if not cover_url: raise PublishError('Pinterest exige uma imagem real do produto.')
     token=decrypt(conn.access_token_enc)
     headers={'Authorization':f'Bearer {token}','Content-Type':'application/json','Accept':'application/json'}
+    api=_pinterest_api()
+
+    # Trial usa obrigatoriamente Sandbox. O Sandbox não aceita Video Pins; para validar
+    # o fluxo ponta a ponta publicamos um Image Pin com a capa real do produto.
+    if pinterest_environment()=='sandbox':
+        payload={'title':(variant.title or '')[:100],'description':(variant.caption or '')[:500],
+                 'board_id':board_id,'link':variant.affiliate_url or '',
+                 'media_source':{'source_type':'image_url','url':cover_url}}
+        async with httpx.AsyncClient(timeout=60,follow_redirects=True) as client:
+            pin=await client.post(f'{api}/pins',headers=headers,json=payload)
+        try:pin_data=pin.json()
+        except Exception: raise PublishError(f'Pinterest Sandbox Create Pin retornou HTTP {pin.status_code}.')
+        if pin.status_code>=400: raise _pinterest_api_error('Pinterest Sandbox recusou o Image Pin de teste',pin_data)
+        pin_id=str(pin_data.get('id') or '')
+        return {'external_post_id':pin_id,'external_post_url':f'https://www.pinterest.com/pin/{pin_id}/' if pin_id else '',
+                'status':'published','pinterest_environment':'sandbox','pinterest_format':'image'}
+
+    # Standard: fluxo real de Video Pin em produção.
+    if not variant.media_storage_key: raise PublishError('Pinterest exige um vídeo antes de publicar em produção.')
     video=get_bytes(variant.media_storage_key)
     async with httpx.AsyncClient(timeout=180,follow_redirects=True) as client:
-        reg=await client.post(f'{PINTEREST_API}/media',headers=headers,json={'media_type':'video'})
+        reg=await client.post(f'{api}/media',headers=headers,json={'media_type':'video'})
         try:reg_data=reg.json()
         except Exception: raise PublishError(f'Pinterest registro de mídia retornou HTTP {reg.status_code}.')
         if reg.status_code>=400: raise _pinterest_api_error('Pinterest recusou o registro do vídeo',reg_data)
@@ -162,11 +198,10 @@ async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publi
         files={'file':(variant.media_filename or 'video.mp4',video,variant.media_content_type or 'video/mp4')}
         up=await client.post(upload_url,data={str(k):str(v) for k,v in params.items()},files=files,headers={'Accept':'*/*'})
         if up.status_code not in (200,201,204): raise PublishError(f'Falha no upload do vídeo ao Pinterest: HTTP {up.status_code} {up.text[:500]}')
-        # Processamento assíncrono do media_id. Poll curto e limitado; nunca cria Pin antes de succeeded.
         import asyncio
         media_status={}
         for _ in range(30):
-            chk=await client.get(f'{PINTEREST_API}/media/{media_id}',headers={'Authorization':f'Bearer {token}','Accept':'application/json'})
+            chk=await client.get(f'{api}/media/{media_id}',headers={'Authorization':f'Bearer {token}','Accept':'application/json'})
             try:media_status=chk.json()
             except Exception: media_status={}
             status=str(media_status.get('status') or '').lower()
@@ -177,9 +212,11 @@ async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publi
         payload={'title':(variant.title or '')[:100],'description':(variant.caption or '')[:500],
                  'board_id':board_id,'link':variant.affiliate_url or '',
                  'media_source':{'source_type':'video_id','cover_image_url':cover_url,'media_id':media_id}}
-        pin=await client.post(f'{PINTEREST_API}/pins',headers=headers,json=payload)
+        pin=await client.post(f'{api}/pins',headers=headers,json=payload)
         try:pin_data=pin.json()
         except Exception: raise PublishError(f'Pinterest Create Pin retornou HTTP {pin.status_code}.')
         if pin.status_code>=400: raise _pinterest_api_error('Pinterest recusou o Video Pin',pin_data)
     pin_id=str(pin_data.get('id') or '')
-    return {'external_post_id':pin_id,'external_post_url':f'https://www.pinterest.com/pin/{pin_id}/' if pin_id else '', 'status':'published'}
+    return {'external_post_id':pin_id,'external_post_url':f'https://www.pinterest.com/pin/{pin_id}/' if pin_id else '',
+            'status':'published','pinterest_environment':'production','pinterest_format':'video'}
+
