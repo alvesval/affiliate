@@ -2,7 +2,7 @@
 
 ## Entrega principal
 - Pinterest OAuth Authorization Code por empresa, com state anti-CSRF e tokens criptografados.
-- Scopes mínimos: boards:read, pins:read, pins:write.
+- Scopes mínimos: boards:read, boards:write, pins:read, pins:write.
 - Listagem de boards para seleção no fluxo de publicação.
 - Video Pin real: registrar mídia -> upload MP4 -> polling de processamento -> Create Pin.
 - Link de afiliado enviado no campo link do Pin.

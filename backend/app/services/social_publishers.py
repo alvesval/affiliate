@@ -103,6 +103,34 @@ async def publish(platform:str, conn:SocialConnection|None, variant:ContentVaria
     raise PublishError(f'{platform}: provider preparado, mas publicação real será habilitada após OAuth/permissões da plataforma.')
 
 PINTEREST_API='https://api.pinterest.com/v5'
+PINTEREST_PUBLISH_SCOPES={'boards:read','boards:write','pins:read','pins:write'}
+
+def _pinterest_scopes(conn:SocialConnection)->set[str]:
+    raw=(getattr(conn,'scopes','') or '').replace(',', ' ')
+    return {x.strip() for x in raw.split() if x.strip()}
+
+def _ensure_pinterest_publish_scopes(conn:SocialConnection)->None:
+    missing=sorted(PINTEREST_PUBLISH_SCOPES-_pinterest_scopes(conn))
+    if missing:
+        raise PublishError(
+            'A conexão do Pinterest não possui todas as permissões necessárias para publicar. '
+            f'Permissões ausentes: {", ".join(missing)}. '
+            'Vá em Integrações, desconecte/conecte novamente o Pinterest e autorize as novas permissões.'
+        )
+
+def _pinterest_api_error(prefix:str, data:dict)->PublishError:
+    message=str((data or {}).get('message') or '')
+    missing=[]
+    if 'Missing:' in message:
+        import re
+        missing=re.findall(r"[a-z_]+:(?:read|write)(?:_secret)?", message)
+    if missing:
+        return PublishError(
+            f'{prefix}: a autorização atual do Pinterest está incompleta. '
+            f'Permissões ausentes: {", ".join(sorted(set(missing)))}. '
+            'Reconecte o Pinterest em Integrações para atualizar as permissões.'
+        )
+    return PublishError(f'{prefix}: {data}')
 
 async def pinterest_boards(conn:SocialConnection)->list[dict]:
     token=decrypt(conn.access_token_enc)
@@ -115,6 +143,7 @@ async def pinterest_boards(conn:SocialConnection)->list[dict]:
     return data.get('items') or []
 
 async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publication:Publication)->dict:
+    _ensure_pinterest_publish_scopes(conn)
     if not variant.media_storage_key: raise PublishError('Pinterest exige um vídeo antes de publicar.')
     board_id=getattr(publication,'pinterest_board_id','') or ''
     cover_url=getattr(publication,'pinterest_cover_url','') or ''
@@ -127,7 +156,7 @@ async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publi
         reg=await client.post(f'{PINTEREST_API}/media',headers=headers,json={'media_type':'video'})
         try:reg_data=reg.json()
         except Exception: raise PublishError(f'Pinterest registro de mídia retornou HTTP {reg.status_code}.')
-        if reg.status_code>=400: raise PublishError(f'Pinterest recusou o registro do vídeo: {reg_data}')
+        if reg.status_code>=400: raise _pinterest_api_error('Pinterest recusou o registro do vídeo',reg_data)
         media_id=reg_data.get('media_id'); upload_url=reg_data.get('upload_url'); params=reg_data.get('upload_parameters') or {}
         if not media_id or not upload_url: raise PublishError('Pinterest não retornou media_id/upload_url.')
         files={'file':(variant.media_filename or 'video.mp4',video,variant.media_content_type or 'video/mp4')}
@@ -151,6 +180,6 @@ async def publish_pinterest(conn:SocialConnection, variant:ContentVariant, publi
         pin=await client.post(f'{PINTEREST_API}/pins',headers=headers,json=payload)
         try:pin_data=pin.json()
         except Exception: raise PublishError(f'Pinterest Create Pin retornou HTTP {pin.status_code}.')
-        if pin.status_code>=400: raise PublishError(f'Pinterest recusou o Video Pin: {pin_data}')
+        if pin.status_code>=400: raise _pinterest_api_error('Pinterest recusou o Video Pin',pin_data)
     pin_id=str(pin_data.get('id') or '')
     return {'external_post_id':pin_id,'external_post_url':f'https://www.pinterest.com/pin/{pin_id}/' if pin_id else '', 'status':'published'}

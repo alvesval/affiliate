@@ -286,7 +286,7 @@ def pinterest_authorize(p:Principal=Depends(require_role('ADMIN')),db:Session=De
     if not(settings.pinterest_client_id and settings.pinterest_client_secret and settings.pinterest_redirect_uri):
         raise HTTPException(409,'Configure PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET e PINTEREST_REDIRECT_URI')
     state=secrets.token_urlsafe(32);db.add(SocialOAuthAttempt(company_id=p.company_id,platform='Pinterest',state=state));db.commit()
-    params={'client_id':settings.pinterest_client_id,'redirect_uri':settings.pinterest_redirect_uri,'response_type':'code','scope':'boards:read,pins:read,pins:write,user_accounts:read','state':state}
+    params={'client_id':settings.pinterest_client_id,'redirect_uri':settings.pinterest_redirect_uri,'response_type':'code','scope':'boards:read,boards:write,pins:read,pins:write,user_accounts:read','state':state}
     return {'authorization_url':'https://www.pinterest.com/oauth/?'+urlencode(params)}
 
 @router.get('/pinterest/callback')
@@ -304,7 +304,7 @@ async def pinterest_callback(code:str=Query(''),state:str=Query(''),error:str=Qu
     except Exception:raise HTTPException(502,f'Pinterest OAuth retornou HTTP {r.status_code}')
     if r.status_code>=400 or not data.get('access_token'):raise HTTPException(502,f'Falha ao conectar Pinterest: {data}')
     conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==attempt.company_id,SocialConnection.platform=='Pinterest')) or SocialConnection(company_id=attempt.company_id,platform='Pinterest')
-    conn.account_name='Pinterest';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','boards:read,pins:read,pins:write,user_accounts:read');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',2592000)));conn.connected_at=datetime.utcnow()
+    conn.account_name='Pinterest';conn.access_token_enc=encrypt(data['access_token']);conn.refresh_token_enc=encrypt(data.get('refresh_token',''));conn.scopes=data.get('scope','boards:read,boards:write,pins:read,pins:write,user_accounts:read');conn.expires_at=datetime.utcnow()+timedelta(seconds=int(data.get('expires_in',2592000)));conn.connected_at=datetime.utcnow()
     db.add(conn);db.delete(attempt);db.commit();return RedirectResponse(settings.frontend_url+'/integracoes?social_connected=pinterest',status_code=303)
 
 @router.get('/pinterest/boards')
