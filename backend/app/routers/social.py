@@ -111,18 +111,40 @@ def create_campaign(data:CampaignRequest,p:Principal=Depends(require_role('EDITO
     platforms=list(dict.fromkeys(data.platforms))
     if not platforms or any(x not in PLATFORMS for x in platforms): raise HTTPException(422,'Selecione ao menos uma rede válida')
     if data.duration_seconds not in (15,30,60): raise HTTPException(422,'Duração deve ser 15, 30 ou 60 segundos')
-    c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective=data.objective,format=data.format,duration_seconds=data.duration_seconds,tone=data.tone,audience=data.audience,status='draft')
+    c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective=data.objective,format=data.format,duration_seconds=data.duration_seconds,tone=data.tone,audience=data.audience,status='draft',origin='manual')
     db.add(c);db.flush()
     for platform in platforms:
         hook,caption,script,tags,cta=_variant(product,platform,data.duration_seconds,data.tone,data.audience)
         db.add(ContentVariant(company_id=p.company_id,campaign_id=c.id,platform=platform,title=product.title[:300],hook=hook,caption=caption,script=script,hashtags=tags,cta=cta,affiliate_url=product.affiliate_url,affiliate_label=product.affiliate_label,link_placement='bio' if platform=='TikTok' else 'caption',status='draft'))
     consume(usage,'campaigns_created',1)
-    db.commit();return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'variants':[_variant_json(v) for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all()],'publications':[]}
+    db.commit();return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'origin':c.origin,'variants':[_variant_json(v) for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all()],'publications':[]}
 
 @router.get('/campaigns')
 def campaigns(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     rows=db.scalars(select(ContentCampaign).where(ContentCampaign.company_id==p.company_id).order_by(ContentCampaign.id.desc()).limit(100)).all()
-    return [{'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'status':c.status,'created_at':c.created_at.isoformat()} for c in rows]
+    result=[]
+    connected={x.platform for x in db.scalars(select(SocialConnection).where(SocialConnection.company_id==p.company_id)).all()}
+    for c in rows:
+        vs=db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id).order_by(ContentVariant.id)).all()
+        pubs=db.scalars(select(Publication).where(Publication.company_id==p.company_id,Publication.campaign_id==c.id).order_by(Publication.id.desc())).all()
+        refs=db.scalars(select(ProductVisualReference).where(ProductVisualReference.company_id==p.company_id,ProductVisualReference.campaign_id==c.id)).all()
+        approved=c.status in {'approved','queued','scheduled','publishing','processing','sent_to_tiktok','published'}
+        stages=[
+            all(bool(v.affiliate_url) for v in vs),
+            bool(vs) and all(bool(v.caption and v.script) for v in vs),
+            bool(refs),
+            bool(vs) and all((v.platform=='Pinterest') or bool(v.media_storage_key) for v in vs),
+            approved,
+            bool(vs) and all(v.platform in connected for v in vs),
+            bool(pubs),
+            bool(pubs) and all(_publication_display(x)['terminal'] for x in pubs),
+        ]
+        progress=round(sum(1 for done in stages if done)*100/len(stages))
+        pub_states=[_publication_display(x) for x in pubs]
+        needs_attention=any(x['code']=='error' for x in pub_states)
+        completed=bool(pubs) and all(x['terminal'] for x in pub_states)
+        result.append({'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'status':c.status,'origin':c.origin or 'manual','platforms':[v.platform for v in vs],'progress':progress,'completed':completed,'needs_attention':needs_attention,'created_at':c.created_at.isoformat()})
+    return result
 
 @router.get('/campaigns/{campaign_id}')
 def campaign_detail(campaign_id:int,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -130,7 +152,7 @@ def campaign_detail(campaign_id:int,p:Principal=Depends(current_principal),db:Se
     if not c: raise HTTPException(404,'Campanha não encontrada')
     vs=db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id).order_by(ContentVariant.id)).all()
     pubs=db.scalars(select(Publication).where(Publication.company_id==p.company_id,Publication.campaign_id==c.id).order_by(Publication.id.desc())).all()
-    return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'variants':[_variant_json(v) for v in vs],'publications':[_publication_json(x) for x in pubs]}
+    return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'origin':c.origin,'variants':[_variant_json(v) for v in vs],'publications':[_publication_json(x) for x in pubs]}
 
 @router.post('/campaigns/{campaign_id}/approve')
 def approve(campaign_id:int,data:ApprovalRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):

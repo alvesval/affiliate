@@ -37,6 +37,7 @@ class ContentCampaign(Base):
     tone: Mapped[str]=mapped_column(String(60), default='Direto e acessível')
     audience: Mapped[str]=mapped_column(String(200), default='')
     status: Mapped[str]=mapped_column(String(30), default='draft')
+    origin: Mapped[str]=mapped_column(String(30), default='manual', index=True)
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
 class ContentVariant(Base):

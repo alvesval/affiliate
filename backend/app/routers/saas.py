@@ -249,7 +249,7 @@ def prepare_content(p:Principal=Depends(require_role('EDITOR')),db:Session=Depen
     rows=sorted(candidates,key=lambda x:x[1]['score'],reverse=True)[:profile.daily_limit]
     run=ContentAutomationRun(company_id=p.company_id,user_id=p.user_id,status='running',requested_count=profile.daily_limit);db.add(run);db.flush();created=[]
     for product,score in rows:
-        c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective='Venda',format='Vídeo curto',duration_seconds=profile.duration_seconds,tone=profile.tone,audience=profile.audience,status='draft')
+        c=ContentCampaign(company_id=p.company_id,product_id=product.id,name=product.title[:300],objective='Venda',format='Vídeo curto',duration_seconds=profile.duration_seconds,tone=profile.tone,audience=profile.audience,status='draft',origin='automation')
         db.add(c);db.flush()
         for platform in platforms:
             hook,caption,script,tags,cta=_variant(product,platform,profile.duration_seconds,profile.tone,profile.audience)

@@ -121,3 +121,24 @@ def upgrade_v116(engine):
     _add_columns(engine,"publications",{
         "tiktok_publish_mode":"VARCHAR(20) NOT NULL DEFAULT 'direct'",
     })
+
+
+def upgrade_rc4_campaign_management(engine):
+    """RC4: persist campaign origin and recover automation provenance from prior runs."""
+    import json
+    _add_columns(engine,"content_campaigns",{
+        "origin":"VARCHAR(30) NOT NULL DEFAULT 'manual'",
+    })
+    inspector=inspect(engine)
+    if "content_automation_runs" not in inspector.get_table_names(): return
+    with engine.begin() as conn:
+        rows=conn.execute(text("SELECT detail_json FROM content_automation_runs WHERE detail_json IS NOT NULL AND detail_json <> ''")).fetchall()
+        ids=set()
+        for (raw,) in rows:
+            try:
+                data=json.loads(raw or '{}')
+                ids.update(int(x) for x in data.get('campaign_ids',[]) if str(x).isdigit())
+            except Exception:
+                continue
+        if ids:
+            conn.execute(text("UPDATE content_campaigns SET origin='automation' WHERE id IN :ids").bindparams(__import__('sqlalchemy').bindparam('ids', expanding=True)), {'ids':sorted(ids)})
