@@ -81,9 +81,21 @@ def _variant_json(v:ContentVariant):
     return {'id':v.id,'platform':v.platform,'title':v.title,'hook':v.hook,'caption':v.caption,'script':v.script,'hashtags':v.hashtags,'cta':v.cta,
       'media_url':v.media_url,'media_filename':v.media_filename,'media_content_type':v.media_content_type,'media_size':v.media_size,'media_duration_seconds':v.media_duration_seconds,'has_uploaded_media':bool(v.media_storage_key),'affiliate_url':v.affiliate_url,'affiliate_label':v.affiliate_label,'link_placement':v.link_placement,'affiliate_configured':bool(v.affiliate_configured_at),'affiliate_configured_at':v.affiliate_configured_at.isoformat() if v.affiliate_configured_at else None,'status':v.status}
 
+def _publication_display(x:Publication):
+    # Normaliza estados técnicos dos provedores em estados compreensíveis no produto.
+    if x.platform=='TikTok' and x.tiktok_publish_mode=='draft' and x.tiktok_status=='SEND_TO_USER_INBOX':
+        return {'code':'sent_to_tiktok','label':'Enviado ao TikTok','detail':'Aguardando finalização no aplicativo TikTok','terminal':True}
+    if x.status=='published': return {'code':'published','label':'Publicado','detail':'Publicação concluída','terminal':True}
+    if x.status=='error': return {'code':'error','label':'Erro','detail':x.error_message or x.tiktok_fail_reason or 'Falha na publicação','terminal':True}
+    if x.status=='processing': return {'code':'processing','label':'Processando','detail':'A rede social ainda está processando o conteúdo','terminal':False}
+    if x.status=='scheduled': return {'code':'scheduled','label':'Agendado','detail':'Aguardando horário programado','terminal':False}
+    if x.status=='queued': return {'code':'queued','label':'Na fila','detail':'Pronto para envio','terminal':False}
+    return {'code':x.status or 'pending','label':(x.status or 'pending').replace('_',' ').title(),'detail':'','terminal':False}
+
 def _publication_json(x:Publication):
+    display=_publication_display(x)
     return {'id':x.id,'variant_id':x.variant_id,'platform':x.platform,'status':x.status,'scheduled_at':x.scheduled_at.isoformat() if x.scheduled_at else None,
-      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_publish_mode':x.tiktok_publish_mode,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids,'pinterest_board_id':x.pinterest_board_id,'pinterest_board_name':x.pinterest_board_name}
+      'published_at':x.published_at.isoformat() if x.published_at else None,'external_post_id':x.external_post_id,'external_post_url':x.external_post_url,'error_message':x.error_message,'retry_count':x.retry_count,'privacy_level':x.privacy_level,'brand_content_toggle':x.brand_content_toggle,'brand_organic_toggle':x.brand_organic_toggle,'is_aigc':x.is_aigc,'tiktok_publish_mode':x.tiktok_publish_mode,'tiktok_status':x.tiktok_status,'tiktok_fail_reason':x.tiktok_fail_reason,'uploaded_bytes':x.uploaded_bytes,'public_post_ids':x.public_post_ids,'pinterest_board_id':x.pinterest_board_id,'pinterest_board_name':x.pinterest_board_name,'display_status':display}
 
 @router.get('/products')
 def products(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -289,8 +301,37 @@ async def publication_status(publication_id:int,p:Principal=Depends(current_prin
         exists=db.scalar(select(GrowthEvent.id).where(GrowthEvent.company_id==p.company_id,GrowthEvent.event_name=='first_publication').limit(1))
         if not exists: db.add(GrowthEvent(company_id=p.company_id,user_id=p.user_id,event_name='first_publication',source='product'))
     elif status=='FAILED':pub.status='error';pub.error_message=data.get('fail_reason') or 'TikTok informou falha no processamento.'
+    elif status=='SEND_TO_USER_INBOX':
+        # Draft Upload terminou do lado da API. A ação restante é humana no app TikTok.
+        pub.status='sent_to_tiktok';pub.error_message=''
     else:pub.status='processing'
     db.commit();return {**_publication_json(pub),'tiktok_status':data}
+
+@router.get('/campaigns/{campaign_id}/workflow')
+def campaign_workflow(campaign_id:int,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    c=db.scalar(select(ContentCampaign).where(ContentCampaign.id==campaign_id,ContentCampaign.company_id==p.company_id))
+    if not c: raise HTTPException(404,'Campanha não encontrada')
+    vs=db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id).order_by(ContentVariant.id)).all()
+    pubs=db.scalars(select(Publication).where(Publication.company_id==p.company_id,Publication.campaign_id==c.id).order_by(Publication.id.desc())).all()
+    refs=db.scalars(select(ProductVisualReference).where(ProductVisualReference.company_id==p.company_id,ProductVisualReference.campaign_id==c.id)).all()
+    connected={x.platform for x in db.scalars(select(SocialConnection).where(SocialConnection.company_id==p.company_id)).all()}
+    approved=c.status in {'approved','queued','scheduled','publishing','processing','published'}
+    media_ready=all((v.platform=='Pinterest') or bool(v.media_storage_key) for v in vs)
+    channels_ready=all(v.platform in connected for v in vs)
+    publication_created=bool(pubs)
+    completed=bool(pubs) and all(_publication_display(x)['terminal'] for x in pubs)
+    stages=[
+      {'key':'product','label':'Produto e link','done':all(bool(v.affiliate_url) for v in vs),'detail':'Link de afiliado configurado'},
+      {'key':'creative','label':'Conteúdo por canal','done':bool(vs) and all(bool(v.caption and v.script) for v in vs),'detail':f'{len(vs)} variação(ões) criada(s)'},
+      {'key':'references','label':'Referências reais','done':bool(refs),'detail':f'{len(refs)}/3 imagem(ns) real(is)'},
+      {'key':'media','label':'Mídia','done':media_ready,'detail':'Vídeo pronto nos canais que exigem mídia'},
+      {'key':'approval','label':'Aprovação humana','done':approved,'detail':'Conteúdo revisado antes da publicação'},
+      {'key':'channels','label':'Canais conectados','done':channels_ready,'detail':', '.join(v.platform for v in vs if v.platform not in connected) or 'Todos conectados'},
+      {'key':'publication','label':'Publicação','done':publication_created,'detail':'Fila/agendamento criado' if publication_created else 'Ainda não enviada'},
+      {'key':'result','label':'Resultado','done':completed,'detail':'Fluxo concluído' if completed else 'Aguardando conclusão'},
+    ]
+    next_stage=next((x for x in stages if not x['done']),None)
+    return {'campaign_id':c.id,'status':c.status,'progress':round(sum(1 for x in stages if x['done'])*100/len(stages)),'next_stage':next_stage,'stages':stages}
 
 @router.get('/connections')
 def connections(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
