@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.core.config import settings
@@ -25,6 +25,11 @@ VIDEO_TYPES={'video/mp4','video/quicktime','video/webm'}
 
 class CampaignRequest(BaseModel):
     product_id:int; platforms:list[str]; objective:str='Venda'; format:str='Vídeo curto'; duration_seconds:int=30; tone:str='Direto e acessível'; audience:str=''
+class CopyRequest(BaseModel):
+    hook:str=Field(min_length=1,max_length=500)
+    script:str=Field(min_length=1,max_length=10000)
+    caption:str=Field(min_length=1,max_length=5000)
+
 class ApprovalRequest(BaseModel): approved:bool=True
 class ScheduleRequest(BaseModel):
     scheduled_at:datetime|None=None
@@ -73,8 +78,11 @@ def _variant(p:Product, platform:str, duration:int, tone:str, audience:str):
         tags='#achadinhos #ofertas #comprasonline #publicidade'
         caption=f'{hook}\n\n{cta}{link_line}\n\n{tags}\n\nPublicidade • Posso receber comissão por compras qualificadas.'
 
-    script=(f'0–3s — GANCHO: {hook}\n3–{max(7,duration-8)}s — Mostre o produto e somente características verificadas no anúncio oficial{target}. '
-            f'Não prometa resultados não comprovados.\n{max(8,duration-7)}–{duration}s — CTA: {cta}\nTom: {tone}. Inclua identificação de publicidade.')
+    if platform=='Pinterest':
+        name=p.title[:100].strip()
+        hook=f'Conheça {name}.'
+        caption=f'{hook}\n\n{cta}\n\nPublicidade • Posso receber comissão por compras qualificadas, sem custo adicional para você.'
+    script=f'{hook} Confira os detalhes de {p.title[:100].strip()} e veja se combina com o que você procura. {cta} Publicidade com link de afiliado.'
     return hook,caption,script,tags,cta
 
 def _variant_json(v:ContentVariant):
@@ -167,6 +175,28 @@ def approve(campaign_id:int,data:ApprovalRequest,p:Principal=Depends(require_rol
     for v in db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id)).all():v.status=c.status
     db.commit();return {'id':c.id,'status':c.status}
 
+def _prepare_copy_edit(v, c, db):
+    pubs=db.scalars(select(Publication).where(Publication.company_id==v.company_id,Publication.campaign_id==c.id)).all()
+    if any(x.status in {'queued','scheduled','publishing','processing','sent_to_tiktok','published'} for x in pubs):
+        raise HTTPException(409,'Campanha com publicação na fila, em andamento ou concluída. Crie uma nova campanha para alterar o conteúdo.')
+    c.status='draft'
+    for item in db.scalars(select(ContentVariant).where(ContentVariant.company_id==v.company_id,ContentVariant.campaign_id==c.id)).all():
+        item.status='draft'
+
+@router.put('/variants/{variant_id}/copy')
+def update_variant_copy(variant_id:int,data:CopyRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    v=db.scalar(select(ContentVariant).where(ContentVariant.id==variant_id,ContentVariant.company_id==p.company_id))
+    if not v: raise HTTPException(404,'Variação não encontrada')
+    c=db.scalar(select(ContentCampaign).where(ContentCampaign.id==v.campaign_id,ContentCampaign.company_id==p.company_id))
+    if not c: raise HTTPException(404,'Campanha não encontrada')
+    values={key:getattr(data,key).strip() for key in ('hook','script','caption')}
+    if not all(values.values()): raise HTTPException(422,'Preencha gancho, roteiro e legenda.')
+    if all(getattr(v,key)==value for key,value in values.items()): return _variant_json(v)
+    _prepare_copy_edit(v,c,db)
+    for key,value in values.items(): setattr(v,key,value)
+    db.commit();db.refresh(v)
+    return _variant_json(v)
+
 @router.post('/variants/{variant_id}/refresh-copy')
 def refresh_variant_copy(variant_id:int,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
     v=db.scalar(select(ContentVariant).where(ContentVariant.id==variant_id,ContentVariant.company_id==p.company_id))
@@ -175,6 +205,7 @@ def refresh_variant_copy(variant_id:int,p:Principal=Depends(require_role('EDITOR
     if not c: raise HTTPException(404,'Campanha não encontrada')
     product=db.scalar(select(Product).where(Product.id==c.product_id,Product.company_id==p.company_id))
     if not product: raise HTTPException(404,'Produto não encontrado')
+    _prepare_copy_edit(v,c,db)
     hook,caption,script,tags,cta=_variant(product,v.platform,c.duration_seconds,c.tone,c.audience)
     v.hook=hook;v.caption=caption;v.script=script;v.hashtags=tags;v.cta=cta
     db.commit();db.refresh(v)
@@ -282,14 +313,20 @@ async def schedule(campaign_id:int,data:ScheduleRequest,p:Principal=Depends(requ
 async def _execute(pub:Publication,db:Session):
     v=db.get(ContentVariant,pub.variant_id)
     conn=db.scalar(select(SocialConnection).where(SocialConnection.company_id==pub.company_id,SocialConnection.platform==pub.platform))
-    # URLs assinadas podem expirar entre o agendamento e a execução; renove a capa no momento do envio.
-    if pub.platform=='Pinterest':
-        ref=db.scalar(select(ProductVisualReference).where(ProductVisualReference.company_id==pub.company_id,ProductVisualReference.campaign_id==pub.campaign_id).order_by(ProductVisualReference.is_primary.desc(),ProductVisualReference.position.asc()))
-        if ref and ref.storage_key:
-            try: pub.pinterest_cover_url=presigned_get_url(ref.storage_key,3600)
-            except MediaStorageError: pass
     pub.status='publishing';pub.error_message='';db.commit()
     try:
+        c=db.get(ContentCampaign,pub.campaign_id)
+        if not c or c.status=='draft': raise PublishError('Aprove novamente a campanha antes de publicar.')
+        if pub.platform=='Pinterest':
+            ref=db.scalar(select(ProductVisualReference).where(ProductVisualReference.company_id==pub.company_id,ProductVisualReference.campaign_id==pub.campaign_id).order_by(ProductVisualReference.is_primary.desc(),ProductVisualReference.position.asc()))
+            if not ref or not ref.storage_key:
+                raise PublishError('Adicione uma foto real em Imagens reais do produto ou use Usar foto oficial do produto antes de publicar.')
+            from app.services.pinterest_cover import normalize_cover
+            import hashlib
+            cover=normalize_cover(get_bytes(ref.storage_key))
+            key=f'content/variants/{v.id}/pinterest-cover-{hashlib.sha256(cover).hexdigest()[:24]}.jpg'
+            put_bytes(key,cover,'image/jpeg')
+            pub.pinterest_cover_url=presigned_get_url(key,3600)
         result=await publish(pub.platform,conn,v,pub);pub.status=result.get('status','processing');pub.external_post_id=result.get('external_post_id','');pub.external_post_url=result.get('external_post_url','')
         if pub.status=='published': pub.published_at=datetime.utcnow()
     except Exception as e:
@@ -300,6 +337,7 @@ async def _execute(pub:Publication,db:Session):
 async def run_publication(publication_id:int,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
     pub=db.scalar(select(Publication).where(Publication.id==publication_id,Publication.company_id==p.company_id))
     if not pub:raise HTTPException(404,'Publicação não encontrada')
+    if pub.status not in {'queued','scheduled','error'}: raise HTTPException(409,'Esta publicação já foi enviada ou está em andamento.')
     await _execute(pub,db);return _publication_json(pub)
 
 @router.post('/publications/{publication_id}/status')
