@@ -16,7 +16,7 @@ def get_plan_context(db: Session, company_id: int):
     plan = db.scalar(select(Plan).where(Plan.code == plan_code))
     limits = json.loads(plan.limits_json or '{}') if plan else {}
     key = _period_key()
-    usage = db.scalar(select(UsageCounter).where(UsageCounter.company_id == company_id, UsageCounter.period_key == key))
+    usage = db.scalar(select(UsageCounter).where(UsageCounter.company_id == company_id, UsageCounter.period_key == key).with_for_update())
     if not usage:
         usage = UsageCounter(company_id=company_id, period_key=key)
         db.add(usage)

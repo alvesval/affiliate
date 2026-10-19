@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.auth import current_principal, Principal
 from app.core.config import settings
-from app.models.saas import GrowthEvent, Company, SaaSUser, Subscription, Referral, Plan
+from app.models.saas import GrowthEvent, Company, SaaSUser, Subscription, Referral, Plan, UsageCounter, AuditEvent
 
 router=APIRouter(prefix='/api/v1/growth',tags=['growth'])
 
@@ -109,7 +109,45 @@ def admin_client_detail(company_id:int,p:Principal=Depends(current_principal),db
       'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status,'created_at':c.created_at.isoformat()},
       'subscription':{'plan':sub.plan_code if sub else 'ENTRY','status':sub.status if sub else 'incomplete','current_period_end':sub.current_period_end.isoformat() if sub and sub.current_period_end else None,'monthly_price_cents':plan.monthly_price_cents if plan else 0,'limits':json.loads(plan.limits_json or '{}') if plan else {}},
       'users':users,'products':product_rows,
-      'usage':usage_now,'totals':{'products':len(product_rows),'campaigns':campaigns_total,'publications':publications_total,'users':len(users)},
+      'usage':{**usage_now,'period':period},'totals':{'products':len(product_rows),'campaigns':campaigns_total,'publications':publications_total,'users':len(users)},
       'platform_usage':platform_usage,'publication_status':status_usage,
       'connections':[{'platform':x.platform,'account_name':x.account_name,'connected_at':x.connected_at.isoformat()} for x in connections],
     }
+
+
+class PublicationUsageAdjustment(BaseModel):
+    publications_created: int = Field(ge=0, strict=True)
+    expected_used: int = Field(ge=0, strict=True)
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    reason: str = Field(min_length=3, max_length=500)
+
+@router.put('/admin/clients/{company_id}/publication-usage')
+def adjust_publication_usage(company_id:int, data:PublicationUsageAdjustment,
+                             p:Principal=Depends(current_principal), db:Session=Depends(get_db)):
+    _admin(p,db)
+    if not db.get(Company,company_id):
+        raise HTTPException(404,'Cliente não encontrado')
+    period=datetime.utcnow().strftime('%Y-%m')
+    if data.period != period:
+        raise HTTPException(409,'O mês de referência mudou. Atualize os dados do cliente.')
+    if not data.reason.strip() or len(data.reason.strip()) < 3:
+        raise HTTPException(422,'Informe o motivo do ajuste.')
+    usage=db.scalar(select(UsageCounter).where(
+        UsageCounter.company_id==company_id,UsageCounter.period_key==period
+    ).with_for_update())
+    before=int(usage.publications_created or 0) if usage else 0
+    if before != data.expected_used:
+        raise HTTPException(409,'O consumo foi alterado. Reabra os detalhes do cliente antes de ajustar.')
+    if data.publications_created > before:
+        raise HTTPException(422,'O novo consumo deve ser menor ou igual ao atual.')
+    if before == data.publications_created:
+        return {'period':period,'before':before,'publications_created':before,'released':0}
+    usage.publications_created=data.publications_created
+    usage.updated_at=datetime.utcnow()
+    db.add(AuditEvent(company_id=company_id,user_id=p.user_id,
+        action='publication_usage_adjusted',entity_type='usage_counter',entity_id=str(usage.id),
+        detail_json=json.dumps({'period':period,'before':before,'after':data.publications_created,
+            'released':before-data.publications_created,'reason':data.reason.strip()},ensure_ascii=False)))
+    db.commit()
+    return {'period':period,'before':before,'publications_created':data.publications_created,
+            'released':before-data.publications_created}

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import json
 import secrets
 import re
 from urllib.parse import urlencode
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import get_db
 from app.models.entities import Product
-from app.models.saas import GrowthEvent
+from app.models.saas import GrowthEvent, AuditEvent
 from app.services.plan_limits import enforce_monthly_limit, consume
 from app.models.social import SocialConnection, SocialOAuthAttempt, ContentCampaign, ContentVariant, Publication, ProductVisualReference
 from app.core.auth import current_principal, require_role, Principal
@@ -25,6 +26,14 @@ VIDEO_TYPES={'video/mp4','video/quicktime','video/webm'}
 
 class CampaignRequest(BaseModel):
     product_id:int; platforms:list[str]; objective:str='Venda'; format:str='Vídeo curto'; duration_seconds:int=30; tone:str='Direto e acessível'; audience:str=''
+class CampaignEditRequest(BaseModel):
+    name: str = Field(min_length=1,max_length=300)
+    objective: str = Field(min_length=1,max_length=30)
+    format: str = Field(min_length=1,max_length=30)
+    duration_seconds: int = Field(ge=1,le=600,strict=True)
+    tone: str = Field(min_length=1,max_length=60)
+    audience: str = Field(max_length=200)
+
 class CopyRequest(BaseModel):
     hook:str=Field(min_length=1,max_length=500)
     script:str=Field(min_length=1,max_length=10000)
@@ -161,6 +170,30 @@ def campaign_detail(campaign_id:int,p:Principal=Depends(current_principal),db:Se
     vs=db.scalars(select(ContentVariant).where(ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id).order_by(ContentVariant.id)).all()
     pubs=db.scalars(select(Publication).where(Publication.company_id==p.company_id,Publication.campaign_id==c.id).order_by(Publication.id.desc())).all()
     return {'id':c.id,'product_id':c.product_id,'name':c.name,'objective':c.objective,'format':c.format,'duration_seconds':c.duration_seconds,'tone':c.tone,'audience':c.audience,'status':c.status,'origin':c.origin,'variants':[_variant_json(v) for v in vs],'publications':[_publication_json(x) for x in pubs]}
+
+@router.put('/campaigns/{campaign_id}')
+def edit_campaign(campaign_id:int,data:CampaignEditRequest,
+                  p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
+    c=db.scalar(select(ContentCampaign).where(
+        ContentCampaign.id==campaign_id,ContentCampaign.company_id==p.company_id
+    ).with_for_update())
+    if not c: raise HTTPException(404,'Campanha não encontrada')
+    values={k:(v.strip() if isinstance(v,str) else v) for k,v in data.model_dump().items()}
+    if any(not values[k] for k in ('name','objective','format','tone')):
+        raise HTTPException(422,'Preencha nome, objetivo, formato e tom.')
+    before={k:getattr(c,k) for k in values}
+    if values != before:
+        # Existing variants/media are preserved; approval must be reviewed again.
+        variant=db.scalar(select(ContentVariant).where(
+            ContentVariant.company_id==p.company_id,ContentVariant.campaign_id==c.id))
+        if not variant: raise HTTPException(409,'Campanha sem variações de conteúdo.')
+        _prepare_copy_edit(variant,c,db)
+        for k,v in values.items(): setattr(c,k,v)
+        db.add(AuditEvent(company_id=p.company_id,user_id=p.user_id,action='campaign_updated',
+            entity_type='content_campaign',entity_id=str(c.id),
+            detail_json=json.dumps({'before':before,'after':values},ensure_ascii=False)))
+        db.commit()
+    return campaign_detail(campaign_id,p,db)
 
 @router.post('/campaigns/{campaign_id}/approve')
 def approve(campaign_id:int,data:ApprovalRequest,p:Principal=Depends(require_role('EDITOR')),db:Session=Depends(get_db)):
