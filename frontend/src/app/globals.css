@@ -66,3 +66,20 @@
 .campaign-editor-modal>.modal-head{position:sticky;top:-24px;z-index:2;background:#101e31;padding:16px 0;border-bottom:1px solid #36516f}
 .campaign-info-editor{margin:18px 0}
 @media(max-width:600px){.campaign-editor-backdrop{padding:8px}.campaign-editor-modal{padding:16px;max-height:96dvh}.campaign-editor-modal>.modal-head{top:-16px}.campaign-editor-modal .variant-grid{grid-template-columns:minmax(0,1fr)}.campaign-editor-modal input,.campaign-editor-modal textarea{max-width:100%}}
+
+/* RC7 — Central de suporte */
+.support-filters{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+.support-search{display:flex;gap:8px;flex:1;min-width:220px}.support-search input{width:100%}
+.support-filters select{min-width:150px}.support-layout{display:grid;grid-template-columns:minmax(280px,360px) minmax(0,1fr);gap:20px;align-items:start}
+.support-list{padding:16px}.support-list-head,.support-ticket-top,.support-message-head,.support-reply-actions,.support-pagination{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.support-ticket{display:flex;flex-direction:column;gap:9px;width:100%;text-align:left;padding:16px;margin:10px 0;background:#0d192a;border:1px solid #2b3e57;border-radius:12px;color:inherit;cursor:pointer;overflow-wrap:anywhere}
+.support-ticket:hover,.support-ticket.selected{border-color:#65e3b4;background:#102b2e}.support-ticket strong{font-size:15px}.support-ticket small{color:var(--muted);font-size:11px}.support-tags{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.support-unread,.support-nav-count{background:#65e3b4;color:#08251d;font-size:11px;font-weight:800;border-radius:20px;padding:3px 8px;white-space:nowrap}.support-nav-count{margin-left:auto}
+.support-status-resolved{background:#153b32;color:#8bf0c9}.support-status-open{background:#183f66;color:#a9d5ff}.support-status-waiting_customer{background:#493c19;color:#ffe3a0}
+.support-conversation{min-width:0}.support-detail-head h2{overflow-wrap:anywhere;margin:10px 0}.support-detail-head{padding-bottom:18px;border-bottom:1px solid #2b3e57;margin-bottom:18px}
+.support-manage{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0}.support-manage label{display:grid;gap:6px;flex:1;font-size:12px}.support-messages{display:grid;gap:16px;margin:24px 0}
+.support-message{border:1px solid #2b3e57;border-radius:12px;padding:16px;background:#0b1728;overflow-wrap:anywhere}.support-message.staff{background:#102824;border-color:#2c5d57}.support-message.internal{background:#302714;border-color:#66512b}.support-note-label{display:block;font-size:11px;color:#ffdf93;margin-top:10px}
+.support-message-head{flex-wrap:wrap;font-size:12px}.support-message-head time{color:var(--muted);font-size:11px}.support-message p{white-space:pre-wrap;line-height:1.65;margin-bottom:0}
+.support-reply{display:grid;gap:12px;border-top:1px solid #2b3e57;padding-top:20px}.support-reply textarea{width:100%;resize:vertical;min-height:110px}.support-internal-toggle{display:flex;align-items:center;gap:9px;font-size:12px}.support-internal-toggle input{width:auto}.support-pagination{margin-top:20px}.support-pagination .btn{padding:8px 10px}.support-back{display:none!important}
+@media(max-width:1050px){.support-layout{grid-template-columns:minmax(220px,300px) minmax(0,1fr)}}
+@media(max-width:760px){.support-layout{grid-template-columns:minmax(0,1fr)}.support-layout.has-selection .support-list{display:none}.support-layout:not(.has-selection) .support-conversation{display:none}.support-back{display:inline-flex!important;margin-bottom:16px}.support-filters select{width:100%}.support-reply-actions{flex-wrap:wrap}.support-search{min-width:0;flex-basis:100%}}
