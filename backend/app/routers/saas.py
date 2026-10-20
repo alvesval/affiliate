@@ -1,6 +1,9 @@
 import json,re,secrets,hashlib,logging
 from datetime import datetime,timedelta
-from fastapi import APIRouter,Depends,HTTPException
+from fastapi import APIRouter,Depends,HTTPException,UploadFile,File
+from fastapi.responses import Response
+from app.models.avatar import UserAvatar
+from app.services.avatar_image import normalize_avatar, MAX_UPLOAD
 from pydantic import BaseModel,EmailStr,Field
 from sqlalchemy import select,func
 from sqlalchemy.orm import Session
@@ -142,14 +145,14 @@ def reset_password(x:ResetPassword,db:Session=Depends(get_db)):
 @router.get('/me')
 def me(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     u=db.get(SaaSUser,p.user_id);c=db.get(Company,p.company_id);s=db.scalar(select(Subscription).where(Subscription.company_id==p.company_id));ensure_plans(db);plan=db.scalar(select(Plan).where(Plan.code==(s.plan_code if s else 'ENTRY')))
-    return {'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role},'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status},'subscription':{'plan':s.plan_code if s else 'ENTRY','status':s.status if s else 'incomplete','trial_ends_at':s.trial_ends_at.isoformat() if s and s.trial_ends_at else None,'limits':json.loads(plan.limits_json) if plan else {}}}
+    return {'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role,'avatar_version':(db.get(UserAvatar,u.id).version if db.get(UserAvatar,u.id) else '')},'company':{'id':c.id,'name':c.name,'slug':c.slug,'status':c.status},'subscription':{'plan':s.plan_code if s else 'ENTRY','status':s.status if s else 'incomplete','trial_ends_at':s.trial_ends_at.isoformat() if s and s.trial_ends_at else None,'limits':json.loads(plan.limits_json) if plan else {}}}
 
 @router.patch('/profile')
 def update_profile(x:ProfileUpdate,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
     u=db.get(SaaSUser,p.user_id)
     if not u: raise HTTPException(404,'Usuário não encontrado')
     u.name=x.name.strip();audit(db,p,'profile.updated','user',u.id);db.commit()
-    return {'saved':True,'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role}}
+    return {'saved':True,'user':{'id':u.id,'name':u.name,'email':u.email,'role':p.role,'avatar_version':(db.get(UserAvatar,u.id).version if db.get(UserAvatar,u.id) else '')}}
 
 @router.post('/security/password')
 def change_password(x:PasswordChange,p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
@@ -272,3 +275,32 @@ def claim_legacy_data(p:Principal=Depends(require_role('OWNER')),db:Session=Depe
         counts[model.__tablename__]=n
     audit(db,p,'legacy.claimed','company',p.company_id,counts);db.commit()
     return {'claimed':counts,'company_id':p.company_id,'note':'Somente registros legados sem empresa foram vinculados.'}
+
+
+@router.post('/profile/avatar')
+async def upload_avatar(file:UploadFile=File(...),p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    data=await file.read(MAX_UPLOAD+1)
+    try: content=normalize_avatar(data)
+    except ValueError as exc: raise HTTPException(422,str(exc))
+    version=hashlib.sha256(content).hexdigest()
+    avatar=db.get(UserAvatar,p.user_id)
+    if not avatar:
+        avatar=UserAvatar(user_id=p.user_id,content=content,version=version);db.add(avatar)
+    else: avatar.content=content;avatar.version=version;avatar.updated_at=datetime.utcnow()
+    audit(db,p,'profile.avatar_updated','user',p.user_id)
+    db.commit()
+    return {'saved':True,'avatar_version':version}
+
+@router.get('/profile/avatar')
+def get_avatar(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    avatar=db.get(UserAvatar,p.user_id)
+    if not avatar: raise HTTPException(404,'Foto de perfil não cadastrada.')
+    return Response(content=avatar.content,media_type='image/jpeg',headers={
+        'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+
+@router.delete('/profile/avatar')
+def delete_avatar(p:Principal=Depends(current_principal),db:Session=Depends(get_db)):
+    avatar=db.get(UserAvatar,p.user_id)
+    if avatar:
+        db.delete(avatar);audit(db,p,'profile.avatar_removed','user',p.user_id);db.commit()
+    return {'saved':True,'avatar_version':''}

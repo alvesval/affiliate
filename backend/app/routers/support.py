@@ -152,7 +152,7 @@ def detail(ticket_id,p,db,staff):
     messages=db.scalars(visible_messages(ticket.id,staff).order_by(SupportMessage.id)).all()
     result=row_json(ticket,db,p,staff)
     result['messages']=[{'id':m.id,'body':m.body,'internal':m.internal,'staff':m.author_is_staff,
-        'author_name':(db.get(SaaSUser,m.author_id).name if db.get(SaaSUser,m.author_id) else 'Usuário'),
+        'author_name':('Suporte' if m.author_is_staff else (db.get(SaaSUser,m.author_id).name if db.get(SaaSUser,m.author_id) else 'Usuário')),
         'created_at':m.created_at.isoformat()+'Z','own':m.author_id==p.user_id} for m in messages]
     result['last_message_id']=messages[-1].id if messages else 0
     return result

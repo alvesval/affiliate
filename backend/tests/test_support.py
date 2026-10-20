@@ -48,6 +48,8 @@ def test_inactive_customer_create_and_complete_conversation(ctx):
  assert db.get(SupportTicket,1).status=='waiting_customer'
  p.user_id=1;p.company_id=1;p.is_super_admin=False
  d=c.get('/api/v1/support/tickets/1').json();assert len(d['messages'])==2
+ assert d['messages'][1]['author_name']=='Suporte'
+ assert 'Atendente' not in json.dumps(d)
  assert c.get('/api/v1/support/unread').json()['customer']==1
  assert c.post('/api/v1/support/tickets/1/read',json={'last_message_id':d['last_message_id']}).status_code==200
  assert c.get('/api/v1/support/unread').json()['customer']==0
