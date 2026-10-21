@@ -25,6 +25,6 @@ export default function Sidebar({collapsed=false,onToggle,mobileOpen=false,onClo
  }}><div className="sidebar-controls"><button className="icon-btn sidebar-desktop-toggle" onClick={onToggle} aria-label={collapsed?'Expandir menu':'Recolher menu'} aria-expanded={!collapsed} title={collapsed?'Expandir menu':'Recolher menu'}>{collapsed?<PanelLeftOpen size={18}/>:<PanelLeftClose size={18}/>}</button><button className="icon-btn sidebar-mobile-close" onClick={onClose} aria-label="Fechar menu"><X size={19}/></button></div><Link href="/dashboard" className="brand brand-logo"><Image src="/ai-affiliate-logo.png" alt="AIAffiliate Intelligence" width={178} height={72} priority/></Link>
   <div className="nav-scroll">{sections.map(s=><div className="nav-section" key={s.title}><div className="nav-heading">{s.title}</div><nav className="nav">{s.items.map(render)}</nav></div>)}
   {isAdmin&&<div className="nav-section"><div className="nav-heading">ADMINISTRAÇÃO</div><nav className="nav">{admin.map(render)}</nav></div>}</div>
-  <div className="side-footer"><span className="status-dot"/> Operação ativa <small>V1 Commercial · RC8</small></div>
+  <div className="side-footer"><span className="status-dot"/> Operação ativa <small>V1 Commercial · RC9</small></div>
  </aside>
 }

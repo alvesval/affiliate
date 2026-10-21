@@ -121,33 +121,51 @@ class PublicationUsageAdjustment(BaseModel):
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
     reason: str = Field(min_length=3, max_length=500)
 
-@router.put('/admin/clients/{company_id}/publication-usage')
-def adjust_publication_usage(company_id:int, data:PublicationUsageAdjustment,
-                             p:Principal=Depends(current_principal), db:Session=Depends(get_db)):
+class CampaignUsageAdjustment(BaseModel):
+    campaigns_created: int = Field(ge=0, strict=True)
+    expected_used: int = Field(ge=0, strict=True)
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    reason: str = Field(min_length=3, max_length=500)
+
+
+def _adjust_usage(company_id, usage_field, new_used, expected_used, period_requested, reason, action, p, db):
     _admin(p,db)
     if not db.get(Company,company_id):
         raise HTTPException(404,'Cliente não encontrado')
     period=datetime.utcnow().strftime('%Y-%m')
-    if data.period != period:
+    if period_requested != period:
         raise HTTPException(409,'O mês de referência mudou. Atualize os dados do cliente.')
-    if not data.reason.strip() or len(data.reason.strip()) < 3:
+    if not reason.strip() or len(reason.strip()) < 3:
         raise HTTPException(422,'Informe o motivo do ajuste.')
     usage=db.scalar(select(UsageCounter).where(
         UsageCounter.company_id==company_id,UsageCounter.period_key==period
     ).with_for_update())
-    before=int(usage.publications_created or 0) if usage else 0
-    if before != data.expected_used:
+    before=int(getattr(usage, usage_field) or 0) if usage else 0
+    if before != expected_used:
         raise HTTPException(409,'O consumo foi alterado. Reabra os detalhes do cliente antes de ajustar.')
-    if data.publications_created > before:
+    if new_used > before:
         raise HTTPException(422,'O novo consumo deve ser menor ou igual ao atual.')
-    if before == data.publications_created:
-        return {'period':period,'before':before,'publications_created':before,'released':0}
-    usage.publications_created=data.publications_created
+    if before == new_used:
+        return {'period':period,'before':before,usage_field:before,'released':0}
+    setattr(usage, usage_field, new_used)
     usage.updated_at=datetime.utcnow()
     db.add(AuditEvent(company_id=company_id,user_id=p.user_id,
-        action='publication_usage_adjusted',entity_type='usage_counter',entity_id=str(usage.id),
-        detail_json=json.dumps({'period':period,'before':before,'after':data.publications_created,
-            'released':before-data.publications_created,'reason':data.reason.strip()},ensure_ascii=False)))
+        action=action,entity_type='usage_counter',entity_id=str(usage.id),
+        detail_json=json.dumps({'period':period,'before':before,'after':new_used,
+            'released':before-new_used,'reason':reason.strip()},ensure_ascii=False)))
     db.commit()
-    return {'period':period,'before':before,'publications_created':data.publications_created,
-            'released':before-data.publications_created}
+    return {'period':period,'before':before,usage_field:new_used,
+            'released':before-new_used}
+
+
+@router.put('/admin/clients/{company_id}/publication-usage')
+def adjust_publication_usage(company_id:int, data:PublicationUsageAdjustment,
+                             p:Principal=Depends(current_principal), db:Session=Depends(get_db)):
+    return _adjust_usage(company_id,'publications_created',data.publications_created,
+        data.expected_used,data.period,data.reason,'publication_usage_adjusted',p,db)
+
+@router.put('/admin/clients/{company_id}/campaign-usage')
+def adjust_campaign_usage(company_id:int, data:CampaignUsageAdjustment,
+                          p:Principal=Depends(current_principal), db:Session=Depends(get_db)):
+    return _adjust_usage(company_id,'campaigns_created',data.campaigns_created,
+        data.expected_used,data.period,data.reason,'campaign_usage_adjusted',p,db)
