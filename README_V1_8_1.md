@@ -2,7 +2,7 @@
 
 Correção incremental sobre a V1.8.
 
-## Ajustes
+## Ajustes2
 - Persistência explícita da configuração de link/etiqueta por variante.
 - Novo campo `affiliate_configured_at` com migração automática.
 - `Salvar link` agora exibe Salvando, sucesso, alterações não salvas e erro local.
